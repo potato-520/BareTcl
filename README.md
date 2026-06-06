@@ -20,4 +20,4 @@ Refer to [design.md](./design.md) for full technical specifications, architectur
 - `build.sh`: Automated build and verification pipeline.
 
 ## License
-MIT License - see [LICENSE](./LICENSE) for details.
+Apache License 2.0 - see [LICENSE](./LICENSE) for details.
