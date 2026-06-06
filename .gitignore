@@ -1,0 +1,12 @@
+# BareTcl Build Artifacts
+tclsh
+*.o
+src/tcllib.c
+
+# Development Logs
+*.log
+test_output.log
+
+# IDEs and OS
+.vscode/
+.DS_Store

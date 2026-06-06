@@ -106,5 +106,18 @@ To ensure consistency across architectures (RH850, ARM, x86), BareTcl strictly u
 
 ---
 
-## 8. Conclusion
+## 8. Project Organization
+
+| Directory/File | Description |
+| :--- | :--- |
+| `src/` | **Engine Core**: `tcl_core.c` (FSM), `extcmd.c` (Extensions), `tcllib.tcl` (Bootstrap). |
+| `tests/` | **Validation Suite**: `tests.tcl` and other stress/coverage scripts. |
+| `tools/` | **Build Tools**: `tcl2c.py` for bootstrap cross-compilation. |
+| `examples/` | **Integration Examples**: `demo.c` showing Linux-based integration. |
+| `docs/` | **Documentation**: Multi-lingual design specs and user guides. |
+| `build.sh` | **Automation**: Unified build and verification pipeline. |
+
+---
+
+## 9. Conclusion
 BareTcl builds an impenetrable barrier for industrial-grade execution through its physical Arena, stackless FSM, and strict 18-rule atomic core.

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "tcl_core.c"
-#include "extcmd.c"
+#include "../src/tcl_core.c"
+#include "../src/extcmd.c"
 
 /* Implement HAL puts for Linux demo */
 void tcl_hal_puts(const tcl_u8 *s) {
