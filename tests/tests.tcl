@@ -1,5 +1,14 @@
 # --- Industrial Validation Suite ---
 
+proc hanoi {n from to aux} {
+    if {expr $n == 1} { puts {Move disk 1}; return 0 }
+    set n1 [expr $n - 1]
+    hanoi $n1 $from $aux $to
+    puts {Move disk N}
+    hanoi $n1 $aux $to $from
+    return 0
+}
+
 set total_tests 0
 set pass_tests 0
 
