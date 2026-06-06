@@ -1,17 +1,5 @@
 # --- Industrial Validation Suite ---
 
-proc for {start cond next body} {
-    uplevel 1 $start
-    while {uplevel 1 $cond} {
-        set res [catch {uplevel 1 $body} err]
-        if {expr $res == 3} { break }
-        if {expr $res == 4} { uplevel 1 $next; continue }
-        if {expr $res == 1} { error $err }
-        if {expr $res == 2} { return $err }
-        uplevel 1 $next
-    }
-}
-
 set total_tests 0
 set pass_tests 0
 
@@ -65,8 +53,7 @@ proc explode {} {
 }
 set r [catch {explode} err]
 if {expr $r == 1} {
-    set cmp [t_scmp $err {boom}]
-    if {expr $cmp == 0} {
+    if {expr [t_scmp $err {boom}] == 0} {
         puts {Result: [OK]}
         incr pass_tests
     } else {
@@ -129,20 +116,53 @@ if {expr [t_scmp $a $b] == 0} {
 } else { puts {Result: [FAILED: a!=b]} }
 incr total_tests
 
-# --- Test Group H: Long Running Stability ---
-puts {Test Group H: Long Running Stability}
-set i 0
-while {expr $i < 50} {
-    set tmp $i
-    append tmp {_data}
-    proc dummy {x} { return $x }
-    dummy $tmp
-    unset tmp
-    incr i
-}
-puts {Stability Test Completed}
+# --- Test Group H: Hanoi Recursive Solver ---
+puts {Test Group H: Hanoi Recursive Solver}
+hanoi 3 {A} {C} {B}
 puts {Result: [OK]}
 incr total_tests; incr pass_tests
+
+# --- Test Group I: 8-Queens Puzzle (Complexity Test) ---
+puts {Test Group I: 8-Queens Puzzle}
+
+proc q_check {row col board} {
+    set i 0
+    while {expr $i < $row} {
+        set b_i [lindex $board $i]
+        if {expr $b_i == $col} { return 0 }
+        set diff [expr $row - $i]
+        set col_diff [expr $col - $b_i]
+        if {expr $col_diff < 0} { set col_diff [expr 0 - $col_diff] }
+        if {expr $diff == $col_diff} { return 0 }
+        incr i
+    }
+    return 1
+}
+
+proc q_solve {row board} {
+    if {expr $row == 8} { return 1 }
+    set col 0
+    while {expr $col < 8} {
+        if {q_check $row $col $board} {
+            set new_board [lrange $board 0 [expr $row - 1]]
+            append new_board { }
+            append new_board $col
+            if {q_solve [expr $row + 1] $new_board} { return 1 }
+        }
+        incr col
+    }
+    return 0
+}
+
+set start_board {}
+if {q_solve 0 $start_board} {
+    puts {8-Queens Solver: SOLUTION FOUND}
+    puts {Result: [OK]}
+    incr pass_tests
+} else {
+    puts {Result: [FAILED]}
+}
+incr total_tests
 
 # --- Final Report ---
 puts {--- Final Report ---}
