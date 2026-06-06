@@ -1,23 +1,56 @@
-# Tclsh.v2 - Ultra-compact Stackless Tcl Interpreter for Embedded Systems
+# Tclsh.v2 - 工业级永恒嵌入式脚本引擎
 
-Tclsh.v2 is a high-reliability, minimal-footprint Tcl interpreter kernel designed for bare-metal MCU environments. It features a completely stackless state-machine execution model and a static-arena-based memory management system with compacting GC.
+Tclsh.v2 并不是一个通用的 Tcl 解释器，而是一个专为**工业级裸机（Bare-metal）微控制器（MCU）**设计的极高性能、完全受控且理论上具有“执行不死性”的内核。它诞生于对 Renesas RH850/U2A 等严苛环境的极限探索，旨在资源极度受限（如 64KB SRAM）的情况下，提供绝对确定性的动态脚本执行能力。
 
-## Key Features
-- **Zero-Libc Dependency**: Pure C implementation without standard library requirements.
-- **Absolute Stackless Execution**: Prevents stack overflow in resource-constrained environments.
-- **Static Arena Memory**: Deterministic memory usage using a single block of SRAM.
-- **Bootstrap Expansion**: Core functionality built on 18 atomic instructions.
-- **Industrial Grade**: Designed for mission-critical applications on MCUs like RH850/U2A.
+## 核心哲学：三大至高准则
 
-## Documentation
-Refer to [design.md](./design.md) for full technical specifications, architectural constraints, and the core instruction set.
+本项目严格遵循《Tclsh.v2 创世法典》中的核心红线，构建了逻辑上的不可逾越壁垒：
 
-## Project Structure
-- `tcl_core.c`: Core interpreter kernel.
-- `demo.c`: Interactive shell for Linux testing.
-- `tcllib.tcl`: Bootstrap expansion library.
-- `tests.tcl`: Comprehensive test suite.
-- `build.sh`: Automated build and verification pipeline.
+1. **确定性执行 (Deterministic Runtime)**：所有的内存分配、指令跳转和状态切换均为 O(1) 或受控的 O(N) 复杂度，严禁任何不可预测的递归与动态堆分配。
+2. **绝对物理独立性 (Total Purity)**：内核达到 **100% Libc-Free**。不包含 `<stdio.h>`, `<stdlib.h>`, `<string.h>` 或 `<stdint.h>`。所有的基础类型定义、内存游标管理、字符串处理和数学运算均由内核手搓实现，确保每一字节的逻辑都完全受控。
+3. **无栈化永恒性 (Stackless Immortality)**：利用五维有限状态机 (FSM) 代替 C 语言原生调用栈。即便执行万层深度的递归算法，C 栈消耗始终恒定。配合“时空轮回法则” (GC)，系统可在物理内存耗尽时自动坍缩并重构，实现无限期持续运行。
 
-## License
-Apache License 2.0 - see [LICENSE](./LICENSE) for details.
+## 深度技术实现
+
+### 1. 五维无栈状态机 (FSM Backbone)
+内核将求值逻辑拆解为五个核心结界状态：
+*   **TOKENIZE**：物理级字符流解析，支持嵌套大括号 `{}` 和中括号 `[]` 的原子切割。
+*   **EXPAND**：因果律展开。在不破坏父帧的情况下，原位处理变量替换 (`$`) 和递归的命令替换 (`[...]`)。
+*   **EXECUTE**：原子指令投射。调用 18 个原初原子指令或自定义存储过程。
+*   **RESUME**：断点唤醒。在子结界执行完毕后，精准回填执行上下文，恢复父帧。
+*   **COND/LOOP**：逻辑循环。通过状态机的回环而非 C 循环实现 `while` 的永续运行。
+
+### 2. 时空轮回法则 (Compacting GC)
+为了防止单向增长的内存游标榨干 Arena，内核实装了严密的 **Mark-Compact 协议**：
+*   **ObjHeader 寻址**：每个堆对象自带 8 字节元数据，支持线性物理遍历。
+*   **多重锚点保护 (Rooting)**：通过 `tmp_roots` 数组保护正在生成的中间变量，规避“未生先死”的 GC 陷阱。
+*   **物理地址重定向**：在不使用额外指针数组的前提下，执行四阶段紧凑化算法，动态修正所有偏移量引用。
+
+## 18 原初原子指令
+
+目前内核已完全实装以下核心指令：
+*   `set`：变量维度的定义与获取。
+*   `puts`：通过 HAL 层向外部世界投射信息。
+*   `expr`：三元整数算术运算与逻辑比较。
+*   `if` / `while`：高维逻辑分支与循环。
+*   `proc`：创造新的执行结界。
+*   `incr`：变量的单向演进。
+*   `return`：结界能量的回溯。
+*   `exit`：彻底终结解释器宇宙。
+
+## 构建与验证
+
+```bash
+# 启动工业级自动化构建流水线
+# 包含：内核纯净度校验 (nm -u)、全覆盖压力测试、递归深度验证
+bash build.sh
+```
+
+## 开发者警示
+
+*   **安全红线**：所有在 Agent 模式下的测试运行必须前置 `timeout 10s`，以防止由于脚本逻辑错误导致的维度挂起。
+*   **对齐要求**：所有的内存分配均严格执行 8 字节对齐，以匹配高性能 MCU 的总线访问需求。
+
+---
+
+*“只有理解了轮回的代价，才能掌握永恒的脚本。” —— 《Tclsh.v2 规格书》*
