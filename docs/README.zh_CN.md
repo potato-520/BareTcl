@@ -31,6 +31,7 @@ BareTcl 是你所能见到的最易移植的解释器。它对你的系统环境
 ## 核心特性
 
 - **工业级可靠性**：专为任务关键型系统构建，坚持零依赖策略。
+- **智能交互外壳 (Shell)**：内置轻量级行编辑器，支持退格、方向键光标移动、最近 16 条历史命令切换，以及智能多行输入（自动识别未闭合的花括号）。
 - **原子 18 指令核心**：C 内核仅包含 18 条原子指令。所有高级逻辑（如 `for`, `incr`, `foreach`）均通过 Tcl 脚本自举实现。
 - **紧凑化 GC**：采用移动/紧凑化垃圾回收器，确保 Arena 空间在万级对象更迭下依然保持零碎片。
 - **位级确定性**：严格使用 `tcl_i32`, `tcl_u8` 等固定宽度类型，确保跨平台行为一致。
@@ -50,7 +51,8 @@ BareTcl 是你所能见到的最易移植的解释器。它对你的系统环境
 ### 1. 裸机移植步骤
 1. **实现 HAL 层**：提供一个简单的 `void tcl_hal_puts(const tcl_u8 *s)`。
 2. **初始化 Arena**：调用 `tcl_init(buffer, size)`。
-3. **加载自举库**：调用 `tcl_load_bootstrap(ctx)` 启用高级 Tcl 功能。
+3. **驱动 Shell**：将串口收到的每个字节传入 `shell_handle_char(&sh, byte, "> ")`。
+4. **解析执行**：当 Shell 函数返回 `1` 时，将 `sh.line` 传入 `tcl_eval` 执行。
 
 ### 2. 使用 C 语言扩展
 ```c
@@ -65,6 +67,7 @@ tcl_register_c_cmd((const tcl_u8 *)"hw_ctrl", my_hardware_cmd);
 
 ## 快速开始 (Linux 演示)
 ```bash
+# 自动编译并启动具备 Raw Mode 支持的高级 Shell
 bash build.sh
 ./tclsh
 ```

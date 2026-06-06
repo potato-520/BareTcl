@@ -31,6 +31,7 @@ By integrating BareTcl, you transform your serial port into a powerful dynamic t
 ## Key Features
 
 - **Industrial Reliability**: Built for mission-critical systems with a zero-dependency policy.
+- **Smart Interactive Shell**: Built-in line editor with backspace, arrow key support, command history, and intelligent multi-line input (brace-aware).
 - **Atomic 18-Core**: Only 18 fundamental instructions. All high-level logic (e.g., `for`, `incr`, `foreach`) is implemented in Tcl via self-bootstrapping.
 - **Compacting GC**: A moving garbage collector ensures your memory Arena remains optimized even during massive object churn.
 - **Fixed-Width Architecture**: Strictly defined `tcl_i32`, `tcl_u8` for cross-platform bit-level determinism.
@@ -50,7 +51,8 @@ By integrating BareTcl, you transform your serial port into a powerful dynamic t
 ### 1. Porting to Bare-Metal
 1. **Implement HAL**: Provide a simple `void tcl_hal_puts(const tcl_u8 *s)`.
 2. **Initialize Arena**: Call `tcl_init(static_buffer, size)`.
-3. **Load Logic**: Call `tcl_load_bootstrap(ctx)` to enable the high-level Tcl library.
+3. **Feed the Shell**: Pass every incoming UART byte to `shell_handle_char(&sh, byte, "> ")`.
+4. **Execute**: When the shell returns `1`, pass `sh.line` to `tcl_eval`.
 
 ### 2. Extending with C
 ```c
@@ -65,6 +67,7 @@ tcl_register_c_cmd((const tcl_u8 *)"hw_ctrl", my_hardware_cmd);
 
 ## Quick Start (Linux Demo)
 ```bash
+# Build with Advanced Shell (Raw Mode)
 bash build.sh
 ./tclsh
 ```

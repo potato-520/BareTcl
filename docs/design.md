@@ -5,40 +5,35 @@
 ### 1.1 System Objectives
 The core objective of this project is to develop a highly reliable, ultra-compact, and fully stackless Tcl script interpreter core (BareTcl). Designed specifically for industrial-grade bare-metal microcontroller (MCU) environments (such as Renesas RH850/U2A), it aims to provide highly portable dynamic scripting capabilities while ensuring deterministic execution in extremely resource-constrained environments.
 
-### 1.2 Design Vision
-By stripping away all dependencies on modern operating systems (OS) and the standard C library (Libc), BareTcl builds a robust script execution environment within minimal SRAM. The system must eliminate the risks of stack overflow and out-of-memory (OOM) errors through its own memory governance mechanisms and finite state machine (FSM) model.
-
 ---
 
 ## 2. Architectural Constraints
 
-To ensure absolute stability in embedded environments, the system must strictly adhere to four core hard constraints:
-
 ### 2.1 Zero-Libc Dependency
-Core compilation must use `-ffreestanding -nostdlib`. Linking to `<stdio.h>`, `<stdlib.h>`, or `<string.h>` is strictly prohibited. All fundamental string operations and memory management must be handled by internal private libraries (e.g., `t_slen`, `t_mcpy`).
+Core compilation must use `-ffreestanding -nostdlib`. Linking to `<stdio.h>`, `<stdlib.h>`, or `<string.h>` is prohibited.
 
 ### 2.2 Static Arena Allocation
 The system utilizes a single, contiguous static memory pool (Static Arena) for its entire lifecycle.
-*   **Allocation Model**: Resource allocation is managed via dual cursors (`p_top` and `t_bot`), separating variable data from execution contexts (Frames).
+*   **Allocation Model**: Managed via dual cursors (`p_top` and `t_bot`), separating variable data from execution contexts (Frames).
 *   **Physical Isolation**: Any dynamic heap allocation (`malloc`/`free`) is forbidden.
 
-### 2.3 Fixed-Length Data Structures
-Execution contexts (`TclFrame`) and variable definitions (`TclVar`) use fixed-length C structures. All internal references must use **relative offsets** based on the Arena's start address. Absolute physical pointers are prohibited to support memory compaction.
-
-### 2.4 Absolute Stackless FSM
-The core execution engine `tcl_eval` must not use recursive calls. The system is implemented as a finite state machine driven by a `while(1)` loop and a multi-dimensional `switch(state)`. All nested logic (e.g., command substitution, proc calls) is achieved through explicit context pushing and state suspension.
+### 2.3 Absolute Stackless FSM
+The core engine `tcl_eval` must not use recursive calls. Nested logic is achieved through explicit context pushing.
 
 ---
 
-## 3. Core Execution Engine
+## 3. The BareTcl Shell Component
 
-### 3.1 5-State FSM Model
-The interpreter's logic is flattened into five primary states handling the instruction lifecycle:
-1.  **TOKENIZE**: Parses raw strings, identifying command and argument boundaries.
-2.  **EXPAND**: Handles variable substitution (`$`) and command substitution (`[...]`).
-3.  **EXECUTE**: Locates the instruction handler and executes it.
-4.  **RESUME**: Restores the parent context and processes return results after a sub-context completes.
-5.  **CLEANUP**: Reclaims temporary resources and handles exception bubbling.
+To support advanced interactive capabilities in bare-metal environments, BareTcl includes a specialized **Line Editor Shell**.
+
+### 3.1 Architecture
+The shell is implemented as a standalone state machine (`src/baretcl_shell.c`) that processes raw bytes from the UART. It maintains its own buffer and history without external memory allocation.
+
+### 3.2 ANSI Escape State Machine
+The shell parses standard ANSI escape sequences to provide professional CLI features:
+*   **Navigation**: Up/Down for command history, Left/Right for in-line cursor movement.
+*   **Editing**: Backspace and Delete handling via terminal-aware control sequences.
+*   **Multi-line**: Intelligent brace tracking (`{}`) to automatically toggle between direct execution and line-continuation modes.
 
 ---
 
@@ -49,75 +44,38 @@ The interpreter's logic is flattened into five primary states handling the instr
 *   **High Address Area (`t_bot`)**: Stores execution frames and the call chain.
 
 ### 4.2 Compacting GC Protocol
-To prevent fragmentation and OOM, the system implements a compacting garbage collector:
-1.  **Trigger**: Synchronous GC is triggered when `tcl_alc_p` cannot find sufficient contiguous space.
-2.  **Marking**: Traverses the global variable table and the current execution chain to mark all reachable `TclVar` nodes and their associated strings.
-3.  **Compacting**: Performs slide compacting, shifting live data blocks toward the start of the Arena.
-4.  **Relocation**: Updates all `name` and `val` offsets and `next` pointers within `TclVar` nodes to maintain physical consistency.
+1.  **Marking**: Traverses global and local variables to mark reachable objects.
+2.  **Compacting**: Slide-compacts live data blocks toward the start of the Arena.
+3.  **Relocation**: Updates relative offsets to maintain physical consistency.
 
 ---
 
 ## 5. Atomic Instruction Set
-
-The kernel implements only 18 atomic instructions as a bootstrap foundation. Higher-level constructs (like `for`) are implemented in Tcl.
-
-| Instruction | Architectural Role |
-| :--- | :--- |
-| `set` | Variable read/write with strict existence checks. |
-| `proc` | Command registration, defining new scopes. |
-| `if` / `while` | Basic control flow via FSM state transitions. |
-| `expr` | Arithmetic and logic engine (supports lazy evaluation). |
-| `return` / `error` | Scope termination and result/error propagation. |
-| `break` / `continue` | Loop control status codes. |
-| `eval` / `catch` | Dynamic code execution and exception trapping. |
-| `upvar` / `uplevel` | Cross-scope memory access and execution. |
-| `list` / `lindex` | List encapsulation and zero-allocation parsing. |
-| `llength` / `lrange` | List length and slice extraction. |
-| `unset` | Logical variable destruction. |
+The kernel implements 18 fundamental instructions (e.g., `set`, `proc`, `if`, `while`, `eval`, `catch`). Higher-level constructs are implemented in the Tcl layer.
 
 ---
 
 ## 6. Engineering & Quality Control
 
 ### 6.1 Libc-Free Verification
-The `build.sh` script performs an automated symbols check:
-*   `gcc -c tcl_core.c -ffreestanding -nostdlib`
-*   `nm -u tcl_core.o`
-*   **Acceptance Criteria**: The output must be empty. Any external symbols (e.g., `memset`) result in an immediate build failure.
+The `build.sh` script enforces a zero-external-symbol policy via `nm -u` analysis.
 
 ### 6.2 Industrial Validation
-BareTcl is validated against a rigorous test suite, including:
-*   Recursive algorithms (Fibonacci, Hanoi, 8-Queens).
-*   GC stress tests (10,000+ object churn in 64KB Arena).
-*   Nested command substitution and exception bubbling.
+BareTcl is validated against recursive algorithms (Fibonacci, 8-Queens) and GC stress tests (10,000+ object churn).
 
 ---
 
-## 7. Basic Type System
-
-To ensure consistency across architectures (RH850, ARM, x86), BareTcl strictly uses internal fixed-width types:
-
-| Type | Physical Meaning |
-| :--- | :--- |
-| `tcl_u8` | Unsigned 8-bit integer (bytes/chars). |
-| `tcl_i32` | Signed 32-bit integer (default Tcl integer). |
-| `tcl_u32` | Unsigned 32-bit integer (offsets/counters). |
-| `tcl_ptr` | Platform-dependent pointer-width integer. |
-
----
-
-## 8. Project Organization
+## 7. Project Organization
 
 | Directory/File | Description |
 | :--- | :--- |
-| `src/` | **Engine Core**: `tcl_core.c` (FSM), `extcmd.c` (Extensions), `tcllib.tcl` (Bootstrap). |
-| `tests/` | **Validation Suite**: `tests.tcl` and other stress/coverage scripts. |
-| `tools/` | **Build Tools**: `tcl2c.py` for bootstrap cross-compilation. |
-| `examples/` | **Integration Examples**: `demo.c` showing Linux-based integration. |
-| `docs/` | **Documentation**: Multi-lingual design specs and user guides. |
-| `build.sh` | **Automation**: Unified build and verification pipeline. |
+| `src/` | **Engine Core**: `tcl_core.c`, `extcmd.c`, `baretcl_shell.c`, `tcllib.tcl`. |
+| `tests/` | **Validation Suite**: Industrial stress and coverage scripts. |
+| `tools/` | **Build Tools**: Bootstrap cross-compilation scripts. |
+| `examples/` | **Integration Examples**: Linux-based demo showing terminal Raw Mode. |
+| `docs/` | **Documentation Center**: Multi-lingual design and user guides. |
 
 ---
 
-## 9. Conclusion
-BareTcl builds an impenetrable barrier for industrial-grade execution through its physical Arena, stackless FSM, and strict 18-rule atomic core.
+## 8. Conclusion
+BareTcl builds an impenetrable barrier for industrial-grade execution through its physical Arena, stackless FSM, and integrated smart shell.
