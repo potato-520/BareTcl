@@ -30,22 +30,38 @@ BareTcl は、単なる軽量なコアではなく、複雑なアルゴリズム
 
 ---
 
-## アーキテクチャの純粋性
+## 開発者ガイド
 
-BareTcl は "The Great Purge"（大浄化）哲学に従っています：
-1. **コア (Core)**: 言語を構築するために必要な最小限の 18 個の原子命令のみを保持。
-2. **拡張 (Extensions)**: プラットフォーム依存のロジック（I/O、OS 呼び出し）は `extcmd.c` に厳格に分離。
-3. **ブートストラップ (Bootstrap)**: 高度なコマンドは Tcl で記述され、ビルドプロセスを通じて C カーネルに統合されます。
+### 1. 検証とテスト
+BareTcl には、産業グレードの包括的なテストスイートが含まれています。
+```bash
+# コード生成、Libc 依存性チェック、および全テストの実行
+bash build.sh
+```
+
+### 2. ベアメタルへの移植
+BareTcl を MCU プロジェクトに統合する手順：
+1. **HAL の定義**: `void tcl_hal_puts(const tcl_u8 *s)` を実装し、出力を UART 等にマッピングします。
+2. **Arena の初期化**: 静的なバッファを確保し、`tcl_init(buffer, size)` を呼び出します。
+3. **コマンドの登録**: ハードウェア制御等のプロシージャを `tcl_register_c_cmd` で登録します。
+4. **コアのロード**: （任意）`tcl_load_bootstrap(ctx)` を呼び出し、Tcl レベルの高度なコマンドを有効化します。
+
+### 3. C 言語による機能拡張
+カスタムコマンドの追加は非常に簡単です：
+```c
+static tcl_i32 my_cmd(TclCtx *ctx, tcl_i32 argc, tcl_u32 *argv) {
+    const tcl_u8 *arg1 = TO_PTR(ctx, argv[1]);
+    // ロジックをここに記述...
+    return TCL_OK;
+}
+
+// 初期化時：
+tcl_register_c_cmd((const tcl_u8 *)"my_cmd", my_cmd);
+```
 
 ---
 
-## クイックスタート
-
-### ビルドとテスト
-```bash
-# 必要要件: gcc, python3
-bash build.sh
-```
+## クイックスタート (Linux デモ)
 
 ### REPL の起動
 ```bash

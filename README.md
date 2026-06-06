@@ -30,22 +30,38 @@ BareTcl is engineered for complexity and stability, as demonstrated by the follo
 
 ---
 
-## Architectural Purity
+## Developer Guide
 
-BareTcl follows "The Great Purge" philosophy:
-1. **The Core**: Only the minimal set of 18 atomic instructions required to build a language.
-2. **The Extensions**: Platform-dependent logic (I/O, OS calls) is strictly separated in `extcmd.c`.
-3. **The Bootstrap**: High-level commands are written in Tcl and integrated into the C core at build time.
+### 1. Verification & Testing
+BareTcl includes a comprehensive industrial-grade test suite.
+```bash
+# Runs code generation, Libc-independence check, and full test suite
+bash build.sh
+```
+
+### 2. Porting to Bare-Metal
+To integrate BareTcl into your MCU project:
+1. **Define HAL**: Implement `void tcl_hal_puts(const tcl_u8 *s)` to map output to your UART/Console.
+2. **Initialize Arena**: Allocate a static buffer and call `tcl_init(buffer, size)`.
+3. **Register Commands**: Call `tcl_register_c_cmd` for your hardware-specific procs.
+4. **Load Core**: (Optional) Run the cross-compiled `tcl_load_bootstrap(ctx)` to enable high-level Tcl commands.
+
+### 3. Extending BareTcl with C
+Adding custom commands is straightforward:
+```c
+static tcl_i32 my_cmd(TclCtx *ctx, tcl_i32 argc, tcl_u32 *argv) {
+    const tcl_u8 *arg1 = TO_PTR(ctx, argv[1]);
+    // Your logic here...
+    return TCL_OK;
+}
+
+// In your initialization:
+tcl_register_c_cmd((const tcl_u8 *)"my_cmd", my_cmd);
+```
 
 ---
 
-## Quick Start
-
-### Build & Test
-```bash
-# Requirements: gcc, python3
-bash build.sh
-```
+## Quick Start (Linux Demo)
 
 ### REPL
 ```bash

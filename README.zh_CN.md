@@ -30,22 +30,38 @@ BareTcl 经过严苛的测试，足以应对复杂逻辑与高压力环境：
 
 ---
 
-## 架构纯净哲学
+## 开发人员指南
 
-BareTcl 遵循 “大清洗 (The Great Purge)” 哲学：
-1. **核心 (Core)**：仅保留构建一门语言所需的 18 条原子指令。
-2. **扩展 (Extensions)**：平台相关逻辑（I/O, OS 调用）严格隔离在 `extcmd.c` 中。
-3. **自举 (Bootstrap)**：高级命令由 Tcl 编写，并在构建时静态集成进 C 内核。
+### 1. 验证与测试
+BareTcl 附带了完整的工业级测试集，确保内核的稳健。
+```bash
+# 执行代码生成、Libc 独立性校验及全量测试
+bash build.sh
+```
+
+### 2. 移植到裸机环境
+将 BareTcl 集成到 MCU 项目非常简单：
+1. **实现 HAL 层**：实现 `void tcl_hal_puts(const tcl_u8 *s)` 函数，将输出映射到 UART 或控制台。
+2. **初始化 Arena**：分配一段静态内存作为 Arena，调用 `tcl_init(buffer, size)`。
+3. **注册硬件指令**：调用 `tcl_register_c_cmd` 注册与硬件相关的 C 函数。
+4. **加载引导库**：（可选）调用 `tcl_load_bootstrap(ctx)` 以启用 `for`, `incr` 等高级 Tcl 指令。
+
+### 3. 使用 C 语言扩展命令
+你可以轻松扩充 Tcl 的功能：
+```c
+static tcl_i32 my_cmd(TclCtx *ctx, tcl_i32 argc, tcl_u32 *argv) {
+    const tcl_u8 *arg1 = TO_PTR(ctx, argv[1]);
+    // 这里实现你的逻辑...
+    return TCL_OK;
+}
+
+// 在初始化流程中：
+tcl_register_c_cmd((const tcl_u8 *)"my_cmd", my_cmd);
+```
 
 ---
 
-## 快速开始
-
-### 构建与测试
-```bash
-# 环境要求: gcc, python3
-bash build.sh
-```
+## 快速开始 (Linux 演示)
 
 ### 交互式 REPL
 ```bash
