@@ -31,7 +31,7 @@ The shell is implemented as a standalone state machine (`src/baretcl_shell.c`) t
 
 ### 3.2 ANSI Escape State Machine
 The shell parses standard ANSI escape sequences to provide professional CLI features:
-*   **Navigation**: Up/Down for command history, Left/Right for in-line cursor movement.
+*   **Navigation**: Up/Down for 16-command history, Left/Right for in-line cursor movement.
 *   **Editing**: Backspace and Delete handling via terminal-aware control sequences.
 *   **Multi-line**: Intelligent brace tracking (`{}`) to automatically toggle between direct execution and line-continuation modes.
 

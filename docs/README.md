@@ -31,7 +31,7 @@ By integrating BareTcl, you transform your serial port into a powerful dynamic t
 ## Key Features
 
 - **Industrial Reliability**: Built for mission-critical systems with a zero-dependency policy.
-- **Smart Interactive Shell**: Built-in line editor with backspace, arrow key support, command history, and intelligent multi-line input (brace-aware).
+- **Smart Interactive Shell**: Built-in line editor with backspace, arrow key support, 16-command history, and intelligent multi-line input (brace-aware).
 - **Atomic 18-Core**: Only 18 fundamental instructions. All high-level logic (e.g., `for`, `incr`, `foreach`) is implemented in Tcl via self-bootstrapping.
 - **Compacting GC**: A moving garbage collector ensures your memory Arena remains optimized even during massive object churn.
 - **Fixed-Width Architecture**: Strictly defined `tcl_i32`, `tcl_u8` for cross-platform bit-level determinism.
