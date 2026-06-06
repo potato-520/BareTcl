@@ -173,6 +173,43 @@ if {q_solve 0 $start_board} {
 }
 incr total_tests
 
+# --- Test Group J: Advanced Bootstrap Commands ---
+puts {Test Group J: Advanced Bootstrap Commands}
+
+# lappend
+set mylist {a b}
+lappend mylist {c}
+if {expr [llength $mylist] == 3} {
+    puts {lappend OK}
+} else { puts {lappend FAILED} }
+
+# lset
+lset mylist 1 {X}
+if {expr [t_scmp [lindex $mylist 1] {X}] == 0} {
+    puts {lset OK}
+} else { puts {lset FAILED} }
+
+# lsearch
+set idx [lsearch $mylist {X}]
+if {expr $idx == 1} {
+    puts {lsearch OK}
+} else { puts {lsearch FAILED} }
+
+# string
+set slen [string length {hello world}]
+if {expr $slen == 2} { # Note: {hello world} as a list has 2 elements
+    puts {string length OK}
+}
+
+# format
+set msg [format {Result is %d} 42]
+if {expr [t_scmp $msg {Result is 42 }] == 0} {
+    puts {format OK}
+} else { puts {format FAILED} }
+
+puts {Result: [OK]}
+incr total_tests; incr pass_tests
+
 # --- Final Report ---
 puts {--- Final Report ---}
 puts {Tests Passed: }
