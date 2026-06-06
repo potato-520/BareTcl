@@ -1,226 +1,110 @@
-# Tclsh.v2 微型内核心软件设计规格书 (v5.0)
+# BareTcl Design Specification (v5.0)
 
-## 1. 概述 (Introduction)
+## 1. Introduction
 
-### 1.1 系统目标
-本项目的核心目标是开发一个高可靠、极致精简且完全无栈化的 Tcl 脚本解释器内核（Tclsh.v2）。该内核专为工业级裸机（Bare-metal）微控制器（MCU）环境（如 Renesas RH850/U2A）设计，旨在提供高度可移植的动态脚本执行能力，同时确保在资源极度受限环境下的确定性运行。
+### 1.1 System Objectives
+The core objective of this project is to develop a highly reliable, ultra-compact, and fully stackless Tcl script interpreter core (BareTcl). Designed specifically for industrial-grade bare-metal microcontroller (MCU) environments (such as Renesas RH850/U2A), it aims to provide highly portable dynamic scripting capabilities while ensuring deterministic execution in extremely resource-constrained environments.
 
-### 1.2 设计愿景
-通过剥离对现代操作系统（OS）和标准 C 库（Libc）的一切依赖，在极小的 SRAM 空间内构建一个具备鲁棒性的脚本执行环境。系统必须通过自有的内存统御机制和状态机模型，彻底杜绝栈溢出（Stack Overflow）及内存泄漏（OOM）风险。
-
----
-
-## 2. 设计原则与物理约束 (Architectural Constraints)
-
-为确保在嵌入式环境中的绝对稳定性，系统必须严格遵守以下四项核心约束（Hard Constraints）：
-
-### 2.1 零标准库依赖 (Zero-Libc Dependency)
-内核编译选项应强制开启 `-nostdlib`。严禁链接 `<stdio.h>`, `<stdlib.h>`, `<string.h>`。所有基础字符串操作（如长度计算、拷贝）和内存管理必须由内核实现的私有库（如 `t_slen`, `t_mcpy`）承担。
-
-### 2.2 静态内存布局 (Static Arena Allocation)
-系统采用单一、连续的静态内存池（Static Arena）进行全生命周期管理。
-*   **分配模型**：通过双向游标（`p_top` 与 `t_bot`）进行资源分配，分别管理变量数据与执行上下文（Frames）。
-*   **物理隔离**：禁止使用任何动态堆内存分配（`malloc`/`free`）。
-
-### 2.3 定长数据骨架 (Fixed-Length Data Structures)
-执行上下文（`TclFrame`）与变量定义（`TclVar`）采用定长 C 结构体。所有内部引用必须使用基于物理 Arena 起始地址的**相对偏移量（Offset）**，禁止使用绝对物理内存指针，以支持后续的内存紧凑化处理。
-
-### 2.4 绝对无栈化执行 (Absolute Stackless FSM)
-核心执行引擎 `tcl_eval` 严禁采用递归调用。系统必须实现为一个由 `while(1)` 循环和多维 `switch(state)` 驱动的有限状态机（FSM）。所有嵌套逻辑（如命令替换、子程序调用）均通过显式的上下文压栈（Frame Pushing）与状态挂起实现。
+### 1.2 Design Vision
+By stripping away all dependencies on modern operating systems (OS) and the standard C library (Libc), BareTcl builds a robust script execution environment within minimal SRAM. The system must eliminate the risks of stack overflow and out-of-memory (OOM) errors through its own memory governance mechanisms and finite state machine (FSM) model.
 
 ---
 
-## 3. 核心执行引擎 (Core Execution Engine)
+## 2. Architectural Constraints
 
-### 3.1 五维状态机模型 (5-State FSM)
-解释器的核心解析逻辑被扁平化为五个主要状态，用于处理指令流的生命周期：
-1.  **TOKENIZE**：解析原始字符串，识别命令与参数边界。
-2.  **EXPAND**：处理变量替换（`$`）与命令替换（`[...]`）。
-3.  **EXECUTE**：定位指令处理函数并执行。
-4.  **RESUME**：当子结界执行完毕后，恢复父结界的执行上下文并处理返回结果。
-5.  **CLEANUP**：回收临时资源，处理异常状态码冒泡。
+To ensure absolute stability in embedded environments, the system must strictly adhere to four core hard constraints:
 
-### 3.2 命令替换的异步化处理
-为防止深度嵌套导致的栈崩溃，遇到命令替换 `[...]` 时，当前上下文将被标记为 `ST_SUSPEND`，并将子命令包装为新的 `TclFrame` 压入 Arena。主循环重新开始解析子结界，直至结果返回。
+### 2.1 Zero-Libc Dependency
+Core compilation must use `-ffreestanding -nostdlib`. Linking to `<stdio.h>`, `<stdlib.h>`, or `<string.h>` is strictly prohibited. All fundamental string operations and memory management must be handled by internal private libraries (e.g., `t_slen`, `t_mcpy`).
 
----
+### 2.2 Static Arena Allocation
+The system utilizes a single, contiguous static memory pool (Static Arena) for its entire lifecycle.
+*   **Allocation Model**: Resource allocation is managed via dual cursors (`p_top` and `t_bot`), separating variable data from execution contexts (Frames).
+*   **Physical Isolation**: Any dynamic heap allocation (`malloc`/`free`) is forbidden.
 
-## 4. 内存管理与紧凑化协议 (Memory Management & GC)
+### 2.3 Fixed-Length Data Structures
+Execution contexts (`TclFrame`) and variable definitions (`TclVar`) use fixed-length C structures. All internal references must use **relative offsets** based on the Arena's start address. Absolute physical pointers are prohibited to support memory compaction.
 
-### 4.1 内存池结构
-*   **低地址区 (`p_top`)**：存储变量名、变量值及 `TclVar` 结构体。
-*   **高地址区 (`t_bot`)**：存储执行栈帧（`TclFrame`）及调用链。
-
-### 4.2 紧凑化垃圾回收 (Compacting GC Protocol)
-由于 Tcl 的字符串特性，频繁的变量更新会导致 `p_top` 区域空洞化及空间耗尽。系统引入“轮回法则”回收机制：
-1.  **触发机制**：当 `tcl_alc_p` 无法分配连续空间时，触发同步 GC。
-2.  **标记阶段 (Marking)**：深度遍历全局变量表及当前执行链上的所有活跃局部变量，标记所有可达的 `TclVar` 及其关联字符串偏移量。
-3.  **压缩阶段 (Compacting)**：执行物理地址平移（Slide Compacting），将存活数据块向 Arena 起始地址挤压。
-4.  **重定位 (Relocation)**：由于采用相对偏移量设计，GC 进程需同步更新所有 `TclVar` 内部的 `name`、`val` 指向以及 `next` 链表指针，确保引用关系的物理一致性。
+### 2.4 Absolute Stackless FSM
+The core execution engine `tcl_eval` must not use recursive calls. The system is implemented as a finite state machine driven by a `while(1)` loop and a multi-dimensional `switch(state)`. All nested logic (e.g., command substitution, proc calls) is achieved through explicit context pushing and state suspension.
 
 ---
 
-## 5. 原初指令集 (Atomic Instruction Set)
+## 3. Core Execution Engine
 
-内核仅实现以下 18 个原子指令作为“自举（Bootstrap）”基础，更高级的控制流（如 `for`）在 `init.tcl` 中基于这些原子指令实现。
+### 3.1 5-State FSM Model
+The interpreter's logic is flattened into five primary states handling the instruction lifecycle:
+1.  **TOKENIZE**: Parses raw strings, identifying command and argument boundaries.
+2.  **EXPAND**: Handles variable substitution (`$`) and command substitution (`[...]`).
+3.  **EXECUTE**: Locates the instruction handler and executes it.
+4.  **RESUME**: Restores the parent context and processes return results after a sub-context completes.
+5.  **CLEANUP**: Reclaims temporary resources and handles exception bubbling.
 
-| 指令 | 描述与架构职能 |
+---
+
+## 4. Memory Management & GC
+
+### 4.1 Arena Structure
+*   **Low Address Area (`p_top`)**: Stores variable names, values, and `TclVar` structures.
+*   **High Address Area (`t_bot`)**: Stores execution frames and the call chain.
+
+### 4.2 Compacting GC Protocol
+To prevent fragmentation and OOM, the system implements a compacting garbage collector:
+1.  **Trigger**: Synchronous GC is triggered when `tcl_alc_p` cannot find sufficient contiguous space.
+2.  **Marking**: Traverses the global variable table and the current execution chain to mark all reachable `TclVar` nodes and their associated strings.
+3.  **Compacting**: Performs slide compacting, shifting live data blocks toward the start of the Arena.
+4.  **Relocation**: Updates all `name` and `val` offsets and `next` pointers within `TclVar` nodes to maintain physical consistency.
+
+---
+
+## 5. Atomic Instruction Set
+
+The kernel implements only 18 atomic instructions as a bootstrap foundation. Higher-level constructs (like `for`) are implemented in Tcl.
+
+| Instruction | Architectural Role |
 | :--- | :--- |
-| `set` | 基础变量读写，包含严格的存在性校验。 |
-| `proc` | 命令注册，定义新的函数作用域。 |
-| `if` / `while` | 基础控制流，通过操纵状态机跳转实现。 |
-| `expr` | 整数算术与逻辑运算引擎。 |
-| `return` | 显式结界终止与数据回传。 |
-| `break` / `continue` | 循环控制状态码抛出。 |
-| `eval` | 二次解析执行，用于动态代码注入。 |
-| `list` | 字符串列表化封装。 |
-| `catch` / `error` | 异常防御机制，支持错误状态码的捕获与传播。 |
-| `upvar` / `uplevel` | 跨作用域内存访问与代码执行（实现全局作用域的关键）。 |
-| `llength` / `lindex` | 基础列表操作，强调零分配解析。 |
-| `lrange` | 列表切片提取，核心内存安全指令。 |
-| `unset` | 变量销毁，内存 Arena 回收的逻辑前哨。 |
+| `set` | Variable read/write with strict existence checks. |
+| `proc` | Command registration, defining new scopes. |
+| `if` / `while` | Basic control flow via FSM state transitions. |
+| `expr` | Arithmetic and logic engine (supports lazy evaluation). |
+| `return` / `error` | Scope termination and result/error propagation. |
+| `break` / `continue` | Loop control status codes. |
+| `eval` / `catch` | Dynamic code execution and exception trapping. |
+| `upvar` / `uplevel` | Cross-scope memory access and execution. |
+| `list` / `lindex` | List encapsulation and zero-allocation parsing. |
+| `llength` / `lrange` | List length and slice extraction. |
+| `unset` | Logical variable destruction. |
 
 ---
 
-## 6. 开发陷阱与风险规避 (Risk Mitigation)
+## 6. Engineering & Quality Control
 
-1.  **延迟求值缺陷**：`expr` 指令必须支持对带花括号 `{}` 的表达式进行原生解析，严禁在外层解析器中提前进行变量替换。
-2.  **错误静默风险**：任何变量查询失败或逻辑错误必须生成 `TCL_ERROR` 状态。严禁返回空值或静默失败，以确保 `catch` 指令的有效性。
-3.  **内存黑洞**：在处理长字符串拼接（如 `lappend`）时，必须及时清理被废弃的中间字符串块，必要时强制启动 GC 以防 SRAM 溢出。
+### 6.1 Libc-Free Verification
+The `build.sh` script performs an automated symbols check:
+*   `gcc -c tcl_core.c -ffreestanding -nostdlib`
+*   `nm -u tcl_core.o`
+*   **Acceptance Criteria**: The output must be empty. Any external symbols (e.g., `memset`) result in an immediate build failure.
+
+### 6.2 Industrial Validation
+BareTcl is validated against a rigorous test suite, including:
+*   Recursive algorithms (Fibonacci, Hanoi, 8-Queens).
+*   GC stress tests (10,000+ object churn in 64KB Arena).
+*   Nested command substitution and exception bubbling.
 
 ---
 
-## 8. 项目组成与工程化 (Project Structure & Engineering)
+## 7. Basic Type System
 
-本工程采用“核心纯净化”架构，确保 `tcl_core.c` 在裸机环境下的绝对可移植性：
+To ensure consistency across architectures (RH850, ARM, x86), BareTcl strictly uses internal fixed-width types:
 
-| 文件名 | 类型 | 职能描述 |
-| :--- | :--- | :--- |
-| `tcl_core.c` | C 源码 | **核心内核**：仅包含 FSM 状态机、内存 Arena 管理及 18 个核心原子指令。**严禁**包含任何平台相关代码（如 `puts`, `exit`）。 |
-| `extcmd.c` | C 源码 | **扩展指令集**：存放所有平台相关（HAL）及用户自定义指令。如 `puts` (UART), `exit` (OS/Jump), `string` 等。 |
-| `demo.c` | C 源码 | **测试外壳**：集成 `tcl_core.c` 与 `extcmd.c`，提供交互式界面。 |
-| `design.md` | 文档 | **设计规格书**：本文件。 |
-| `tcllib.tcl` | Tcl 脚本 | **自举扩展库**：基于原子指令实现 `for`, `foreach` 等。 |
-| `tcl2c.py` | Python 脚本 | **转换工具**：将 `tcllib.tcl` 静态化为 C 字节数组。 |
-| `build.sh` | Shell 脚本 | **自动化流水线**：执行纯净度校验与全覆盖测试。 |
-
-### 8.1 自举库扩展清单 (Bootstrap Library Expansion)
-`tcllib.tcl` 必须利用 18 个原初指令，最大化地复刻标准 Tcl 的高级功能。重点包含但不限于：
-
-| 类别 | 目标自举命令 |
+| Type | Physical Meaning |
 | :--- | :--- |
-| **控制流** | `for`, `foreach`, `switch`, `incr` |
-| **列表操作** | `lappend`, `linsert`, `lreplace`, `lsearch`, `lsort`, `lrange`, `join` |
-| **字符串操作** | `append`, `split`, `string (length, index, range, equal, trim, compare, match, tolower, toupper)` |
-| **辅助函数** | `global` (利用 `upvar`), `unknown` |
-
-### 8.2 自动化构建与全覆盖测试流程
-`build.sh` 需执行以下严格流水线：
-1. **代码生成**：运行 `tcl2c.py`。
-2. **内核纯净度校验 (Libc-Free Check)**：
-   * 独立编译内核：`gcc -c tcl_core.c -ffreestanding -nostdlib -o tcl_core.o`。
-   * **符号分析**：使用 `nm -u tcl_core.o` 检查未定义符号。
-   * **准入标准**：输出必须为空。若存在任何外部符号引用（如 `memset`, `memcpy` 等标准库函数），构建必须立即终止并标记失败。
-3. **静态链接**：编译生成 `tclsh`（链接 `demo.c` 和 `tcllib.c`）。
-4. **全覆盖测试**：运行 `timeout 10s ./tclsh tests.tcl`。
-   * **安全红线**：为了防止死循环导致流程挂起，所有运行 `tclsh` 的测试操作必须使用 `timeout` 指令保护（默认 10 秒）。
-   * **测试要求**：`tests.tcl` 必须包含对 18 个原子指令的边界测试、对 `tcllib.tcl` 中所有自举命令的功能测试、以及汉诺塔、斐波那契递归压力测试。
-   * **特性测试**：必须包含对“命令替换嵌套”、“延迟求值”、“变量作用域（upvar/uplevel）”以及“异常捕获冒泡”的专项特性验证。
-4. **质量保证与闭环验证**：开发过程中必须确保测试用例覆盖了本规格书提及的所有技术点，且执行结果必须为 100% Pass。任何非 Pass 或测试覆盖不足的情况，均视为开发未完成。
+| `tcl_u8` | Unsigned 8-bit integer (bytes/chars). |
+| `tcl_i32` | Signed 32-bit integer (default Tcl integer). |
+| `tcl_u32` | Unsigned 32-bit integer (offsets/counters). |
+| `tcl_ptr` | Platform-dependent pointer-width integer. |
 
 ---
 
-## 10. 开发流程与质量控制 (Development Workflow & Quality Control)
-
-为了确保代码实现与本设计规格书的高度一致性，本项目遵循严格的迭代开发与同行评审准则。
-
-### 10.1 开发准则
-*   **规格对齐**：代码实现必须逐行对照 `design.md` 的要求，确保无设计偏离。
-*   **逻辑闭环**：每一项新增功能必须伴随对应的单元测试或集成测试，实现逻辑自洽。
-
-### 10.2 提交与审查规范 (Commits & Review)
-1.  **任务原子化**：将大型功能分解为可验证的原子任务进行开发。
-2.  **阶段性提交 (Staged Commits)**：
-    *   在完成逻辑阶段后进行本地 Git 提交，确保版本历史清晰。
-    *   提交时需确保代码通过静态分析（纯净度校验）与自动化测试。
-3.  **执行安全 (Execution Safety)**：
-    *   任何阶段的自动化测试运行（特别是 `./tclsh`）必须前置 `timeout` 指令，以防止因脚本逻辑错误（如死循环）导致系统无限挂起。
-4.  **回归验证**：任何 Bug 修复或重构后，必须运行全量测试集，确保无功能回归。
-
-
----
-
-## 12. 工程环境与开源资源 (Environment & External Resources)
-
-为了加速开发并确保工程质量，本项目被授权在以下范围内行使环境管理权：
-
-### 12.1 工具与环境管理
-*   **软件安装**：允许使用系统包管理器（如 `apt`, `yum`）安装必要的构建工具、调试器或静态分析工具。
-*   **权限执行**：允许使用 `sudo` 执行需要提权的操作，且无需交互式密码输入。
-*   **自动化环境**：可根据需要配置编译链、优化选项及持续集成环境。
-
-### 12.2 纯原创手搓原则 (Hand-crafted Implementation)
-*   **严禁外部代码**：禁止直接复制或集成任何第三方开源库或算法实现。
-*   **纯手工锻造**：从字符串处理、内存管理到状态机逻辑，每一行代码必须根据本规格书的要求原创实现。
-*   **独立性**：确保每一字节的逻辑都完全受控，不夹杂任何外部黑盒逻辑，以维持内核的绝对纯净度。
-
----
-
-## 13. C API 与嵌入式集成接口 (C API & Embedding Interface)
-
-为了使内核能够无缝集成到裸机环境，必须提供一组标准化的 C 调用接口。
-
-### 13.1 系统初始化
-*   **`void tcl_init(void *arena, int size)`**：
-    *   **职能**：接收外部分配的静态 SRAM 缓冲区（Arena），初始化 `p_top` 和 `t_bot` 游标，并预装载 18 个原子指令。
-*   **`void tcl_register_c_cmd(const char *name, Tcl_CmdProc proc)`**：
-    *   **职能**：允许在 C 语言层面注册新的原子指令（如针对特定硬件的控制命令），扩展命令表。
-
-### 13.2 脚本执行与交互
-*   **`int tcl_eval(const char *script)`**：
-    *   **职能**：启动状态机解析并执行脚本。返回 `TCL_OK`, `TCL_ERROR` 或 `TCL_EXIT` 等状态。
-*   **`const char *tcl_get_result(void)`**：
-    *   **职能**：获取当前解释器状态机结束后的最终返回字符串（Result）。
-
-### 13.3 硬件抽象层 (HAL) 回调
-内核不直接操作硬件，必须定义以下可覆盖的软弱符号（Weak Symbols）或回调：
-*   **`void tcl_hal_puts(const char *s)`**：由用户在 `demo.c` 或 MCU 驱动中实现，用于对接串口或其他输出。
-
----
-
-## 14. 多语言文档要求 (Multi-language Documentation)
-
-项目交付时，必须提供三种语言版本的 README 文件（`README.md`, `README_JP.md`, `README_EN.md`），以满足国际化开源标准。
-
-### 14.1 文档核心内容
-各语言版本的 README 必须包含但不限于以下深度内容：
-*   **特性详解 (Features)**：详细描述无栈化 FSM、零 Libc 依赖、静态 Arena 内存管理、自举扩展机制等核心技术优势。
-*   **设计限制 (Limitations)**：诚实列出当前版本的局限性，如内存池大小限制、暂不支持浮点数、不支持多线程并发、仅支持 18 个原初指令对应的 C 层解析等。
-*   **快速入门 (Quick Start)**：如何在 Linux 环境下编译并运行 `demo.c`。
-*   **嵌入式集成指南**：如何将内核移植到 MCU 平台。
-
----
-
-## 15. 基本类型系统 (Basic Type System)
-
-为了确保代码在不同微处理器架构（如 RH850, ARM, x86）上的物理一致性，本项目禁止直接使用 C 原生类型（如 `int`, `long`, `char`），必须统一使用以下手搓的固定宽度类型：
-
-
-| 自定义类型 | 物理含义 | 备注 |
-| :--- | :--- | :--- |
-| `tcl_u8` | 无符号 8 位整数 | 用于字节流与字符 |
-| `tcl_i8` | 有符号 8 位整数 | 用于小量偏移 |
-| `tcl_u16` | 无符号 16 位整数 | 用于短偏移量 |
-| `tcl_i16` | 有符号 16 位整数 | - |
-| `tcl_u32` | 无符号 32 位整数 | 用于 Arena 游标及大容量计数 |
-| `tcl_i32` | 有符号 32 位整数 | **Tcl 脚本内的默认整数类型** |
-| `tcl_ptr` | 平台相关指针宽度整数 | 用于内存地址计算（仅限必要时） |
-
-### 15.1 定义原则
-这些类型必须在 `tcl_core.c` 的头部通过 `typedef` 显式定义。由于本项目不使用 `.h` 头文件，`tcl_core.c` 承担所有声明与实现的职能。严禁包含 `<stdint.h>`。
-
----
-
-## 16. 结论 (Conclusion)
-
-Tclsh.v2 通过物理上的内存 Arena、逻辑上的无栈化状态机以及严格的 18 条原初法则，构建了一个理论上不可逾越的工业级执行壁垒。后续开发应重点聚焦于“紧凑化 GC”的物理实现，确保在动态执行过程中系统内存始终处于稳态。
+## 8. Conclusion
+BareTcl builds an impenetrable barrier for industrial-grade execution through its physical Arena, stackless FSM, and strict 18-rule atomic core.
