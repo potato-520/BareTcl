@@ -19,7 +19,7 @@ puts {--- Industrial Validation Phase ---}
 
 # --- Test Group A: GC Stress Test ---
 puts {Test Group A: GC Stress Test}
-set s ""
+set s {}
 set i 0
 while {expr $i < 200} {
     append s {abcdefghij}
@@ -115,7 +115,7 @@ set a {original_data}
 set b $a
 set c $b
 # Trigger GC
-set s ""
+set s {}
 set i 0
 while {expr $i < 1000} { append s {x}; incr i }
 # Validate pointers survived relocation

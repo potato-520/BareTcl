@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "tcl_core.c"
+#include "extcmd.c"
 
 /* Implement HAL puts for Linux demo */
-void tcl_hal_puts(const char *s) {
-    fputs(s, stdout);
+void tcl_hal_puts(const tcl_u8 *s) {
+    fputs((const char *)s, stdout);
+    fflush(stdout);
 }
 
 #define ARENA_SIZE (1024 * 1024)
@@ -13,6 +15,11 @@ static char arena[ARENA_SIZE];
 int main(int argc, char **argv) {
     tcl_init(arena, ARENA_SIZE);
     TclCtx *ctx = (TclCtx *)arena;
+    tcl_register_ext_cmds(ctx);
+    if (tcl_load_bootstrap(ctx) != TCL_OK) {
+        printf("Bootstrap Error: %s\n", (const char *)tcl_get_result(ctx));
+    }
+    
     printf("Init: p_top=%u, t_bot=%u, size=%u\n", ctx->p_top, ctx->t_bot, ctx->size);
 
     if (argc > 1) {
@@ -30,9 +37,9 @@ int main(int argc, char **argv) {
         script[len] = 0;
         fclose(f);
 
-        int status = tcl_eval(ctx, script);
+        int status = tcl_eval(ctx, (const tcl_u8 *)script);
         if (status == TCL_ERROR) {
-            printf("Error: %s\n", tcl_get_result(ctx));
+            printf("Error: %s\n", (const char *)tcl_get_result(ctx));
         }
         free(script);
     } else {
@@ -42,13 +49,13 @@ int main(int argc, char **argv) {
         while (1) {
             printf("> ");
             if (!fgets(buf, sizeof(buf), stdin)) break;
-            int status = tcl_eval(ctx, buf);
+            int status = tcl_eval(ctx, (const tcl_u8 *)buf);
             if (status == TCL_EXIT) break;
             if (status == TCL_ERROR) {
-                printf("Error\n");
+                printf("Error: %s\n", (const char *)tcl_get_result(ctx));
             } else {
-                const char *res = tcl_get_result(ctx);
-                if (res && res[0]) printf("%s\n", res);
+                const tcl_u8 *res = tcl_get_result(ctx);
+                if (res && res[0]) printf("%s\n", (const char *)res);
             }
         }
     }

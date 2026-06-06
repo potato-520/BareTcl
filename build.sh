@@ -3,6 +3,9 @@ set -e
 
 echo "=== Tclsh.v2 Build & Test Pipeline ==="
 
+echo "[0/4] Generating Bootstrap Library..."
+python3 tcl2c.py tcllib.tcl tcllib.c
+
 echo "[1/4] Compiling Core for Libc-Free Check..."
 gcc -c tcl_core.c -ffreestanding -nostdlib -o tcl_core.o
 
@@ -17,7 +20,7 @@ fi
 echo "Libc-Free check passed."
 
 echo "[3/4] Compiling Executable..."
-gcc demo.c -o tclsh
+gcc -DTCL_DEBUG demo.c -o tclsh
 
 echo "[4/4] Running Full Coverage Test Suite (with timeout)..."
 # Remove debug prints in tcl_core.c before final test? 
