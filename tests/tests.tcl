@@ -409,7 +409,7 @@ run_test "Legacy: GC 循环" "运行 100 次循环自增" "结果为 100" {
 puts "\n{分类 8: 重构逻辑深度验证}"
 
 proc upvar_level2_test {vname} {
-    uplevel 1 [list upvar_level1_test $vname]
+    upvar_level1_test $vname
 }
 proc upvar_level1_test {vname} {
     upvar 2 $vname v
