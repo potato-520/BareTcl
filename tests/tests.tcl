@@ -403,6 +403,36 @@ run_test "Legacy: GC 循环" "运行 100 次循环自增" "结果为 100" {
     expr {$a_gc == 100}
 }
 
+# ====================================================
+# 第八部分：新增验证 (New Refactoring Verifications)
+# ====================================================
+puts "\n{分类 8: 重构逻辑深度验证}"
+
+proc upvar_level2_test {vname} {
+    uplevel 1 [list upvar_level1_test $vname]
+}
+proc upvar_level1_test {vname} {
+    upvar 2 $vname v
+    set v "level2_val"
+}
+run_test "Upvar 相对层级 (level 2)" \
+         "在两层嵌套调用中通过 upvar 2 修改最外层变量" \
+         "变量 uv_l2 应变为 level2_val" \
+         {
+             set uv_l2 "orig"
+             upvar_level2_test uv_l2
+             expr {[t_scmp $uv_l2 "level2_val"] == 0}
+         }
+
+run_test "Catch 结果变量捕获" \
+         "执行 catch {error \"msg\"} res 并检查 res 的值" \
+         "catch 返回 1 且 res 应为 \"msg\"" \
+         {
+             set catch_res "none"
+             set catch_code [catch {error "msg"} catch_res]
+             expr {$catch_code == 1 && [t_scmp $catch_res "msg"] == 0}
+         }
+
 }
 
 # ====================================================
