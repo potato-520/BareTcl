@@ -1,26 +1,35 @@
-# tcllib.tcl - BareTcl Bootstrap Library
+# tcllib.tcl - BareTcl 自举脚本库 (Bootstrap Library)
 
-# --- Basic Math ---
-proc abs {x} { if {expr $x < 0} { return [expr 0 - $x] }; return $x }
+# --- 基础数学函数 ---
+# abs: 返回绝对值
+proc abs {x} { 
+    if {expr $x < 0} { 
+        return [expr 0 - $x] 
+    }; 
+    return $x 
+}
 
-# --- Variable & Flow Control ---
+# --- 变量与流程控制 ---
+# incr: 变量自增
 proc incr {varName} {
     upvar 1 $varName v
     set v [expr $v + 1]
 }
 
+# for: 标准 for 循环实现
 proc for {start cond next body} {
     uplevel 1 $start
     while {uplevel 1 $cond} {
         set res [catch {uplevel 1 $body} err]
-        if {expr $res == 3} { break }
-        if {expr $res == 4} { uplevel 1 $next; continue }
-        if {expr $res == 1} { error $err }
-        if {expr $res == 2} { return $err }
+        if {expr $res == 3} { break }        ;# TCL_BREAK
+        if {expr $res == 4} { uplevel 1 $next; continue } ;# TCL_CONTINUE
+        if {expr $res == 1} { error $err }   ;# TCL_ERROR
+        if {expr $res == 2} { return $err }  ;# TCL_RETURN
         uplevel 1 $next
     }
 }
 
+# foreach: 标准列表遍历
 proc foreach {var list body} {
     set len [llength $list]
     set i 0
@@ -35,12 +44,12 @@ proc foreach {var list body} {
     }
 }
 
-# --- List Operations ---
+# --- 列表操作 ---
+# lappend: 追加元素至列表变量
 proc lappend {varName val} {
     upvar 1 $varName v
     set tmp $v
-    set cond [t_scmp $tmp {}]
-    if {expr $cond != 0} {
+    if {expr [string compare $tmp {}] != 0} {
         append tmp { }
         append tmp $val
         set v $tmp
@@ -50,46 +59,50 @@ proc lappend {varName val} {
     return $v
 }
 
+# lset: 修改列表中指定索引的元素
 proc lset {varName index val} {
     upvar 1 $varName list
     set pre [lrange $list 0 [expr $index - 1]]
     set post [lrange $list [expr $index + 1] end]
     set res $pre
-    set cond [llength $res]
-    if {expr $cond > 0} { append res { } }
+    if {expr [llength $res] > 0} { append res { } }
     append res $val
-    set cond_p [llength $post]
-    if {expr $cond_p > 0} { append res { }; append res $post }
+    if {expr [llength $post] > 0} { append res { }; append res $post }
     set list $res
 }
 
+# lsearch: 查找元素在列表中的索引
 proc lsearch {list pattern} {
     set i 0
     set len [llength $list]
     while {expr $i < $len} {
         set item [lindex $list $i]
-        if {expr [t_scmp $item $pattern] == 0} { return $i }
+        if {expr [string compare $item $pattern] == 0} { return $i }
         set i [expr $i + 1]
     }
     return -1
 }
 
-# --- String Operations ---
+# --- 字符串操作 (对齐标准 Tcl) ---
+# string: 字符串操作集合
 proc string {subcmd args} {
+    if {expr [__string_core compare $subcmd {compare}] == 0} {
+        return [__string_core compare [lindex $args 0] [lindex $args 1]]
+    }
     set str [lindex $args 0]
-    if {expr [t_scmp $subcmd {length}] == 0} {
+    if {expr [__string_core compare $subcmd {length}] == 0} {
         return [llength $str] 
     }
-    if {expr [t_scmp $subcmd {index}] == 0} {
+    if {expr [__string_core compare $subcmd {index}] == 0} {
         return [lindex $str [lindex $args 1]]
     }
-    if {expr [t_scmp $subcmd {range}] == 0} {
+    if {expr [__string_core compare $subcmd {range}] == 0} {
         return [lrange $str [lindex $args 1] [lindex $args 2]]
     }
     error [list unknown string subcommand $subcmd]
 }
 
-# --- Format (Basic implementation) ---
+# --- 格式化输出 (极简实现) ---
 proc format {fmt args} {
     set res {}
     set arg_idx 0
@@ -97,12 +110,9 @@ proc format {fmt args} {
     set i 0
     while {expr $i < $len} {
         set part [lindex $fmt $i]
-        set c1 [t_scmp $part {%s}]
-        set c2 [t_scmp $part {%d}]
-        if {expr $c1 == 0} {
-            append res [lindex $args $arg_idx]
-            set arg_idx [expr $arg_idx + 1]
-        } else if {expr $c2 == 0} {
+        set c1 [string compare $part {%s}]
+        set c2 [string compare $part {%d}]
+        if {expr $c1 == 0 || $c2 == 0} {
             append res [lindex $args $arg_idx]
             set arg_idx [expr $arg_idx + 1]
         } else {
@@ -113,3 +123,7 @@ proc format {fmt args} {
     }
     return $res
 }
+
+# --- 方言兼容性 Shim ---
+# t_scmp: 向后兼容旧的方言指令
+proc t_scmp {s1 s2} { return [string compare $s1 $s2] }
