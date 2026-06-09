@@ -19,11 +19,19 @@ echo "[3/4] Compiling Demo Executable..."
 gcc examples/demo.c -o tclsh
 
 echo "[4/4] Running Industrial Validation Suite..."
-if timeout 10s ./tclsh tests/tests.tcl > test_output.log; then
-    echo "SUCCESS: All tests passed!"
-    cat test_output.log
+# Use timeout to prevent infinite loops and capture all output
+if timeout 15s ./tclsh tests/tests.tcl > test_output.log 2>&1; then
+    # Check if the log contains the final 100% success conclusion
+    if grep -q "结论: 所有测试在标准 Tcl 环境下均已通过" test_output.log; then
+        echo "SUCCESS: All tests passed!"
+        cat test_output.log
+    else
+        echo "ERROR: Test suite output did not contain success conclusion."
+        cat test_output.log
+        exit 1
+    fi
 else
-    echo "ERROR: Test suite failed."
+    echo "ERROR: Test suite crashed or timed out."
     cat test_output.log
     exit 1
 fi
