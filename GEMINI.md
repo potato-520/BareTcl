@@ -32,7 +32,7 @@
 本项目采用 Master-SubAgent (A-B) 协作模式进行自动化 Bug 修复与开发。
 
 ### 5.1 角色定义
-- **Master Agent**: 负责整体流程控制，运行 `build.sh` 寻找测试错误，并调度 SubAgent 启动工作。
+- **Master Agent**: 负责整体流程控制，运行 `build.sh` 寻找测试错误，并调度 SubAgent 启动工作。**Master Agent 仅负责观察现象、下达指令与流程监控，严禁直接修改项目源代码。**所有代码级别的排障与修复必须交由 SubAgent B 在 SubAgent A 的指导下完成。
 - **SubAgent A (架构师)**: 负责指导、审查和验收，确保所有调查和修改严格遵循 `GEMINI.md` 和 `design.zh_CN.md` 中的设计原则和物理约束。
 - **SubAgent B (开发者)**: 负责实际的排障、分析、方案设计与代码修改，所有操作必须在 A 的授权和审查下进行。
 
