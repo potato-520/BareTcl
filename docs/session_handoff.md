@@ -18,9 +18,11 @@
 
 ---
 
-## 二、上一会话完成的工作（最新 git log）
+## 二、本会话完成的工作（最新 git log）
 
 ```
+07493ba  fix: 修复 else body 被嵌套 if 语句覆盖的 Bug（用户手工提交）
+ca033dd  docs: 添加新会话交接文档 session_handoff.md
 9871843  fix: __info_commands_core 未找到命令时返回空字符串而非 TCL_NULL
 92be578  feat: 自举迁移 lrange/global/info + 修复 if-else else 分支不执行 Bug
 861493d  fix: 修复 upvar #0 全局帧查找逻辑
@@ -37,111 +39,101 @@ f26b3de  feat: 实现双引号字符串插值（String Interpolation）
 | 反斜杠换行续行（`\<newline>`） | `tcl_core.c` | ST_TOKENIZE 增加续行检查，使 `run_test "x" \\ "y"` 多行写法生效 |
 | 双引号字符串插值 | `tcl_core.c` | 新增 `tcl_str_interp`，ST_EXPAND 双引号分支调用它展开 `$var` 和 `\escape` |
 | `upvar #0` 找不到顶层帧变量 | `tcl_core.c` | `#0` 分支从沿 parent 链追踪到最顶层帧，而非直接使用 `g_vars`（TCL_NULL） |
-| **`if-else` else 分支从不执行** | `tcl_core.c` | ST_IF_BODY 假分支完全忽略了 `tmp_roots[11]` 中的 else body；修复后创建 else 子帧 |
+| **`if-else` else 分支从不执行** | `tcl_core.c` | ST_IF_BODY 假分支忽略了 `tmp_roots[11]` 中的 else body；修复后创建 else 子帧 |
 | 自举迁移：`lrange` | `tcllib.tcl` | 从 `tcl_core.c` 删除 C 实现，改为 `llength`+`lindex`+`while` Tcl 自举 |
 | 自举迁移：`global` | `tcllib.tcl` | 从 `tcl_core.c` 删除 C 实现，改为 `uplevel 1 [list upvar #0 x x]` 自举 |
 | 自举迁移：`info` | `extcmd.c` + `tcllib.tcl` | C 层提供 `__info_commands_core` 底层查询，Tcl 层封装 `proc info` |
-| `info commands` 返回 TCL_NULL | `extcmd.c` | 找不到命令时应返回真空字符串对象，而非 TCL_NULL（后者会导致 `$var` 展开误判为未定义） |
+| `info commands` 返回 TCL_NULL | `extcmd.c` | 找不到命令时应返回真空字符串对象，而非 TCL_NULL |
+| **嵌套 if 覆盖 else_body（用户修复）** | `tcl_core.c` | 把 else_body 从 `tmp_roots[11]` 移到当前帧 `frame->result` 字段，避免全局竞争 |
 
 ---
 
 ## 三、当前测试状态（`bash build.sh`）
 
-运行 `tests/tests.tcl`，**第 1 轮**结果：
+运行 `tests/tests.tcl`，**最新结果**（commit `07493ba`）：
 
 | 分类 | 测试项 | 状态 |
 |------|--------|------|
 | 分类1: 核心原子指令 | 变量读写、算术运算、逻辑比较、命令替换 | ✅ PASS |
 | 分类2: 过程与作用域 | 过程定义与调用、Uplevel 跨帧访问 | ✅ PASS |
 | 分类3: 自举库 | for循环、min/max/abs、incr、info_exists、lappend、lrange、lreverse、lset、foreach | ✅ PASS |
-| 分类4: 深度递归 | Fibonacci(10)、汉诺塔(4盘) | ✅ PASS |
-| 分类4: 深度递归 | **8皇后求解** | ❌ FAIL（`Error:`） |
-| 分类5: GC压力测试 | 未到达（因8皇后失败提前退出） | ❓ 未知 |
+| 分类4: 深度递归 | Fibonacci(10)、汉诺塔(4盘)、**8皇后求解** | ✅ PASS |
+| 分类5: GC压力测试 | 字符串拼接压力、变量频繁创建销毁、对象移动稳定性 | ✅ PASS |
+| 分类6: 错误捕获 | Catch 错误捕获 | ✅ PASS |
+| 分类7: 历史回归 | Legacy: append 指令 | ✅ PASS |
+| 分类7: 历史回归 | **Legacy: foreach 指令** | ❌ FAIL（`Error: 0`） |
+| 分类7: 历史回归 | 后续测试未到达 | ❓ 未知 |
 
-**测试套件循环 5 轮**，当前因 8 皇后失败无法到达"所有测试通过"的结论行。
+> **注**：8皇后通过是用户修复了嵌套 if else_body 覆盖 Bug 的直接成果。
 
 ---
 
-## 四、下一步工作：8 皇后求解失败分析
+## 四、下一步工作：Legacy foreach 失败分析
 
-### 8 皇后测试代码（`tests/tests.tcl` L253-L283）
+### 失败的测试用例（`tests/tests.tcl`）
 
 ```tcl
-proc q_check {row col board} {
-    set i 0
-    while {$i < $row} {
-        set b_i [lindex $board $i]
-        if {$b_i == $col} { return 0 }
-        set diff [expr {$row - $i}]
-        set col_diff [expr {$col - $b_i}]
-        if {$col_diff < 0} { set col_diff [expr {0 - $col_diff}] }
-        if {$diff == $col_diff} { return 0 }
-        incr i
-    }
-    return 1
-}
-proc q_solve {row board} {
-    if {$row == 8} { return 1 }
-    set col 0
-    while {$col < 8} {
-        if {[q_check $row $col $board]} {
-            set new_board [lrange $board 0 [expr {$row - 1}]]
-            lappend new_board $col
-            if {[q_solve [expr {$row + 1}] $new_board]} { return 1 }
-        }
-        incr col
-    }
-    return 0
+run_test "Legacy: foreach 指令" "test_foreach.tcl 内容" "输出应匹配" {
+    set ml_l {a b c}
+    set res_l {}
+    foreach it_l $ml_l { append res_l $it_l }
+    expr {[t_scmp $res_l {abc}] == 0}
 }
 ```
 
-### 疑点分析（需在新会话调查）
+### 根因分析（已通过调试确认）
 
-1. **`incr i` 带隐式步长**：当前 `tcllib.tcl` 中的 `incr` 只支持无参数版（步长=1），`incr col` 和 `incr i` 应该没问题，但 `incr i -1`（在 lreverse polyfill 里）可能失败。
+**根本 Bug：空字符串参数（`{}`）在传入 proc 的 `args` 参数时被丢弃。**
 
-2. **`lrange $board 0 [expr {$row - 1}]`**：当 `$row=0` 时，`$row - 1 = -1`，`lrange list 0 -1` 的行为（应返回空列表）是否正确？
-
-3. **`lappend new_board $col`**：在 proc 内部，`new_board` 的 `lappend` 需要 `upvar 1`，但 `tcllib.tcl` 中 `lappend` 使用的是 `upvar 1 $varName v`，这在嵌套调用中是否正确？
-
-4. **深度递归导致 Arena 栈区耗尽**：8皇后递归深度达 8 层（每层多个帧），加上 while 循环帧，可能触发栈区与堆区碰撞（OOM）。
-
-5. **`[q_check ...]` 返回值用于 if 条件**：`if {[q_check ...]}` 中命令替换返回 `0` 或 `1`，这需要 `[cmd]` 在花括号条件里正确执行。
-
-### 调试方法
-
+测试验证：
 ```bash
-# 在项目根目录
+proc test_args {first args} { puts "args=$args len=[llength $args]" }
+test_args compare {} {abc}   # 输出：args= （空！{} 被吃掉了）
+test_args compare hello {abc} # 输出：args=hello （正常）
+```
+
+当 `{}` 空字符串作为调用参数时，在 ST_EXPAND 阶段剥括号后变成空字符串，**然后这个空字符串没有被收集进 `args` 列表**。
+
+这导致 `string compare {} {abc}` → proc string 被调用时 `args = {abc}`（只有一个元素），  
+`lindex $args 0` 返回 `abc`，`lindex $args 1` 返回空，最终 `compare(abc, "") = -1`（而非期望的 `compare("", abc) = -1`），结果语义混乱。
+
+### 调查方向
+
+1. **参数绑定阶段**：`tcl_cmd_proc`（proc 调用时实际执行参数绑定的逻辑，在 tcl_core.c 中的 EXECUTE 阶段）是否在 `argv[i]` 为空字符串（不是 TCL_NULL，而是一个空字符串对象）时跳过了该参数？
+
+2. **`args` 收集逻辑**：`proc` 调用时，如何将剩余参数打包成列表传入 `args` 变量？是否有跳过空字符串的逻辑？
+
+3. **调试命令**：
+```bash
 gcc examples/demo.c -o tclsh_dbg -g -fsanitize=address
-cat > /tmp/test_queens.tcl << 'EOF'
-# 先测试最简单的 q_check
-proc q_check {row col board} {
+cat > /tmp/test_args.tcl << 'EOF'
+proc test_args {first args} {
+    puts "first=$first"
+    puts "argc=[llength $args]"
     set i 0
-    while {$i < $row} {
-        set b_i [lindex $board $i]
-        if {$b_i == $col} { return 0 }
-        incr i
+    while {$i < [llength $args]} {
+        puts "args[$i]=[lindex $args $i]"
+        set i [expr {$i + 1}]
     }
-    return 1
 }
-puts [q_check 1 0 {0}]
-puts [q_check 1 1 {0}]
+test_args compare {} {abc}
 EOF
-timeout 5s ./tclsh_dbg /tmp/test_queens.tcl 2>&1
+timeout 5s ./tclsh_dbg /tmp/test_args.tcl 2>&1
 ```
 
 ---
 
-## 五、已知待解决的其他问题
+## 五、已知待解决的其他问题（按优先级排序）
 
 | 问题 | 严重度 | 说明 |
 |------|--------|------|
-| `[cmd]` 在双引号字符串内不执行 | 高 | `puts "result=[cmd]"` 中 `[cmd]` 被当字面量输出；`tcl_str_interp` 只处理 `$var` 和 `\escape`，未处理 `[...]` |
-| `for` 第一次循环体执行前 `$i` 为空 | 低 | 表现为输出第一行 `round=`（空），随后正常 `round=1 2 3`；for body 第一次执行时变量可能还未在正确帧中 |
-| `expr {$a == ""}` 与空字符串比较 | 中 | `expr {$r == ""}` 返回空而非 `1`；字符串 `==` 比较路径在 expr 三元归约中未正确实现 |
-| `incr` 不支持增量参数（`incr i -1`） | 中 | 当前 `tcllib.tcl` 中 `incr` 只支持 `incr varname`，未支持 `incr varname N` 的第二个参数 |
-| `lindex $list end` 不支持 `end` 关键字 | 中 | C 实现的 `lindex` 没有处理 `end` 字符串，需要补充 |
-| `lrange $list 0 end-1` 不支持 | 中 | `end-1` 算术表达式在 lrange 索引位置未实现 |
-| `## 第 $round / 5 轮` 显示为空 | 低 | for 循环 body 内的 `$round` 在 tcllib.tcl 的 for proc 中无法查找到外部变量（作用域链问题） |
+| **空字符串参数 `{}` 在 proc args 中被丢弃** | 🔴 高 | `test_args compare {} {abc}` 中 `args` 为空，`{}` 没有进入 args 列表；是当前最优先 Bug |
+| `[cmd]` 在双引号字符串内不执行 | 🟠 中 | `puts "result=[cmd]"` 中 `[cmd]` 被当字面量输出；需在 `tcl_str_interp` 中添加命令替换支持（需 yield）|
+| `expr {$a == ""}` 与空字符串比较 | 🟠 中 | `expr {$r == ""}` 返回空而非 `1`；字符串 `==` 比较路径在 expr 三元归约中未实现 |
+| `incr` 不支持增量参数（`incr i -1`） | 🟡 中 | 当前 `tcllib.tcl` 中 `incr` 只支持 `incr varname`，未支持 `incr varname N` |
+| `lindex $list end` 不支持 `end` 关键字 | 🟡 中 | C 实现的 `lindex` 没有处理 `end` 字符串 |
+| `lrange $list 0 end-1` 不支持 | 🟡 中 | `end-1` 算术表达式在 lrange 索引位置未实现 |
+| `## 第 $round / 5 轮` 显示为空 | 🟢 低 | for 循环 body 内变量无法查找到外部变量（作用域链问题） |
 
 ---
 
@@ -220,9 +212,10 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 然后阅读 GEMINI.md 了解开发规约。
 
 你作为 Master Agent，请：
-1. 运行 bash build.sh，确认当前失败在「8皇后求解」
-2. 启动新一轮 A-B 协作，以「8皇后求解失败」为首个目标
-3. 严格遵循 GEMINI.md 中的 A-B 协作框架（5.2节）
+1. 运行 bash build.sh，确认当前失败在「Legacy: foreach 指令」
+2. 阅读 docs/session_handoff.md 第四节，了解根因（空字符串参数被丢弃）
+3. 启动新一轮 A-B 协作，修复「空字符串参数 {} 在 proc args 中被丢弃」这个 Bug
+4. 严格遵循 GEMINI.md 中的 A-B 协作框架（5.2节）
 
 项目路径：/mnt/c/myprog/BareTcl
 ```
