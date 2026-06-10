@@ -113,7 +113,14 @@ static int tcl_cmd_info_commands_core(TclCtx *context, tcl_i32 arg_count, tcl_u3
         }
         var_offset = var_ptr->next; /* 移动到下一个节点 */
     }
-    context->result = TCL_NULL; /* 未找到，返回空 */
+    /* 设计：未找到命令时返回真正的空字符串对象，而非 TCL_NULL。
+       TCL_NULL 代表"无值"，会导致 $var 展开失败误判为变量未定义。
+       空字符串 "" 是有效的 Tcl 值，与 TCL_NULL 语义不同。 */
+    tcl_u32 empty_str = tcl_alc_p(context, 1); /* 分配1字节，用于存放 null terminator */
+    if (empty_str != TCL_NULL) { /* 分配成功 */
+        ((tcl_u8*)TO_PTR(context, empty_str))[0] = 0; /* 写入字符串结束符，得到空字符串 */
+        context->result = empty_str; /* 返回空字符串对象 */
+    } /* 分配失败时 context->result 保持为 TCL_NULL（极端情况，可接受） */
     return TCL_OK;
 }
 
