@@ -732,6 +732,45 @@ static tcl_i32 tcl_cmd_expr(TclCtx *context, tcl_i32 argument_count, tcl_u32 *ar
         return TCL_ERROR;       /* 参数不足，报错 */
     } /* 结束参数检查 */
     tcl_u8 *expression_script_ptr = TO_PTR(context, argument_values[1]); /* 获取表达式脚本的物理地址 */
+    /* 设计：expr 的参数无论是否经过花括号处理，都需要：
+       1. 对 $var 进行变量替换（tcl_str_interp），确保 {$i+1} 剥括号后能展开 $i
+       2. 将展开后的表达式送入新帧（FRAME_IS_EXPR）执行归约求值 */
+    if (argument_count == 2) { /* 单参数模式：剥括号后需要展开并在新帧求值 */
+        tcl_u8 *raw_expr_ptr = expression_script_ptr; /* 获取原始表达式指针 */
+        tcl_u32 raw_expr_len = t_slen(raw_expr_ptr); /* 获取原始表达式长度 */
+        tcl_u32 inner_offset; /* 用于存放内层（去括号/展开后）的偏移量 */
+        tcl_u32 inner_len; /* 内层字符串长度 */
+        if (raw_expr_ptr[0] == '{' && raw_expr_len >= 2) { /* 花括号情况：剥除括号后展开 */
+            inner_offset = tcl_alc_p(context, raw_expr_len); /* 分配临时空间 */
+            if (inner_offset == TCL_NULL) { return TCL_ERROR; } /* 分配失败 */
+            t_mcpy(TO_PTR(context, inner_offset), raw_expr_ptr + 1, raw_expr_len - 2); /* 剥括号 */
+            ((tcl_u8*)TO_PTR(context, inner_offset))[raw_expr_len - 2] = 0; /* 封底 */
+            inner_len = raw_expr_len - 2; /* 内层长度 */
+        } else { /* 非花括号情况：直接作为内层 */
+            inner_offset = argument_values[1]; /* 直接使用已有偏移 */
+            inner_len = raw_expr_len; /* 长度不变 */
+        } /* 结束花括号判断 */
+        /* 对内层字符串执行变量替换（$i → 当前变量值） */
+        context->tmp_roots[0] = tcl_str_interp(context, TO_PTR(context, inner_offset), inner_len); /* 展开 $var */
+        if (context->tmp_roots[0] == TCL_NULL) { return TCL_ERROR; } /* 展开失败 */
+        /* 在 Arena 栈区分配新帧用于执行展开后的表达式 */
+        tcl_u32 sub_expression_frame_offset = tcl_alc_t(context, sizeof(TclFrame)); /* 分配栈帧 */
+        if (sub_expression_frame_offset == TCL_NULL) { context->tmp_roots[0] = TCL_NULL; return TCL_ERROR; } /* 分配失败 */
+        TclFrame *sub_frame_ptr = TO_PTR(context, sub_expression_frame_offset); /* 获取帧指针 */
+        sub_frame_ptr->script = context->tmp_roots[0]; /* 绑定展开后的表达式脚本 */
+        sub_frame_ptr->pc = 0; /* 程序计数器从起点 */
+        sub_frame_ptr->vars = TCL_NULL; /* 表达式帧不创建独立变量表 */
+        sub_frame_ptr->parent = context->curr_f; /* 物理返回路径 */
+        sub_frame_ptr->scope = context->curr_f; /* 逻辑作用域：共享父帧变量 */
+        sub_frame_ptr->state = ST_TOKENIZE; /* 初始状态：分词 */
+        sub_frame_ptr->flags = FRAME_SHARE_SCOPE | FRAME_IS_EXPR; /* 共享作用域并启用表达式归约 */
+        sub_frame_ptr->cond = sub_frame_ptr->body = sub_frame_ptr->result = TCL_NULL; /* 清空控制槽位 */
+        sub_frame_ptr->argc = sub_frame_ptr->exp_idx = 0; /* 清空参数寄存器 */
+        context->tmp_roots[0] = TCL_NULL; /* 释放临时根保护 */
+        ((TclFrame*)TO_PTR(context, context->curr_f))->state = ST_RESUME; /* 父帧挂起等待结果 */
+        context->curr_f = sub_expression_frame_offset; /* 切换执行上下文至表达式子帧 */
+        return TCL_YIELD; /* 让步，驱动 FSM 进入新帧执行 */
+    } /* 结束单参数模式 */
     /* 延迟求值支持：识别并处理由花括号 {} 包裹的原始表达式（防止外层预先展开变量） */
     if (expression_script_ptr[0] == '{') { /* 如果脚本以花括号开始，视为需要求值的整体 */
         tcl_u32 script_length = t_slen(expression_script_ptr); /* 计算包含花括号在内的总字符串长度 */
