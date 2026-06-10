@@ -1001,10 +1001,21 @@ static tcl_i32 tcl_cmd_upvar(TclCtx *context, tcl_i32 argument_count, tcl_u32 *a
     /* 识别可选的 level 参数，支持 #0 语法 */
     if (argument_count > 3 && first_param_ptr[0] == '#') { /* 绝对层级判定 */
         if (first_param_ptr[1] == '0' && first_param_ptr[2] == 0) { /* 专门处理 #0 全局作用域 */
-            target_frame_offset = TCL_NULL; /* #0 逻辑上直接指向系统全局变量表 */
+            /* 设计说明：#0 表示"顶层命名空间帧"。顶层脚本执行时的帧是调用链的根帧，
+               其 parent == TCL_NULL。我们沿 parent 链追踪到最顶层帧，而非使用 TCL_NULL
+               （TCL_NULL 代表内部 g_vars 表，与顶层帧是不同的存储区域） */
+            tcl_u32 top_frame_offset = context->curr_f; /* 从当前帧开始向上追踪 */
+            while (top_frame_offset != TCL_NULL) { /* 沿 parent 链追溯 */
+                TclFrame *top_frame_ptr = TO_PTR(context, top_frame_offset); /* 获取帧指针 */
+                if (top_frame_ptr->parent == TCL_NULL) { /* 到达最顶层帧（parent 为空） */
+                    break; /* 找到了，停止回溯 */
+                } /* 结束顶层判定 */
+                top_frame_offset = top_frame_ptr->parent; /* 继续向上一层 */
+            } /* 结束顶层帧追踪 */
+            target_frame_offset = top_frame_offset; /* #0 指向调用链最顶层帧 */
         } else { /* 处理其他绝对层级（BareTcl 简化处理：目前优先保证 #0 兼容性） */
             target_frame_offset = TCL_NULL; /* 暂时退化为全局处理以满足测试需求 */
-        }
+        } /* 结束 #N 绝对层级处理 */
         argument_start_index = 2; /* 参数偏移量递增，跳过已处理的层级字段 */
     } else { /* 相对层级处理逻辑 */
         if (argument_count > 3 && (first_param_ptr[0] >= '0' && first_param_ptr[0] <= '9')) { 
