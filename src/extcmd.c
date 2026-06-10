@@ -85,10 +85,43 @@ static int tcl_cmd_string(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_value
     return TCL_ERROR;           /* 不支持的 string 子指令 */
 }
 
+
+/* __info_commands_core 指令实现：底层命令表查询，供 tcllib.tcl 中 info proc 封装调用 */
+/* 职能：在 C 命令注册表和 Tcl proc 全局符号表中搜索指定名称，若找到则返回名称，否则返回空 */
+static int tcl_cmd_info_commands_core(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (arg_count < 2) {            /* 参数检查：需要至少一个查询名称 */
+        context->result = TCL_NULL; /* 无参数返回空 */
+        return TCL_OK;
+    }
+    const tcl_u8 *search_name = TO_PTR(context, arg_values[1]); /* 获取查询名称 */
+    /* 第一步：在 C 原子命令注册表中线性查找 */
+    for (tcl_i32 idx = 0; idx < cmd_count; idx++) {
+        if (t_scmp(search_name, cmd_table[idx].name) == 0) { /* 名称匹配 */
+            context->result = arg_values[1]; /* 返回命令名称 */
+            return TCL_OK;
+        }
+    }
+    /* 第二步：在全局符号表中查找 Tcl proc（以 "p:" 前缀标识） */
+    tcl_u32 var_offset = context->g_vars; /* 从全局变量表头开始遍历 */
+    while (var_offset != TCL_NULL) {
+        TclVar *var_ptr = TO_PTR(context, var_offset); /* 获取节点指针 */
+        const tcl_u8 *vname = TO_PTR(context, var_ptr->name); /* 获取名称字符串 */
+        if (vname[0] == 'p' && vname[1] == ':' &&
+            t_scmp(search_name, vname + 2) == 0) { /* 匹配 "p:<name>" 格式 */
+            context->result = arg_values[1]; /* 返回命令名称 */
+            return TCL_OK;
+        }
+        var_offset = var_ptr->next; /* 移动到下一个节点 */
+    }
+    context->result = TCL_NULL; /* 未找到，返回空 */
+    return TCL_OK;
+}
+
 /* 导出函数：向核心解释器注册所有扩展指令 */
 void tcl_register_ext_cmds(TclCtx *context) {
     tcl_register_c_cmd((const tcl_u8 *)"puts", tcl_cmd_puts);
     tcl_register_c_cmd((const tcl_u8 *)"exit", tcl_cmd_exit);
     tcl_register_c_cmd((const tcl_u8 *)"append", tcl_cmd_append);
     tcl_register_c_cmd((const tcl_u8 *)"__string_core", tcl_cmd_string); /* 注册核心 C 实现 */
+    tcl_register_c_cmd((const tcl_u8 *)"__info_commands_core", tcl_cmd_info_commands_core); /* 注册底层命令查询接口 */
 }

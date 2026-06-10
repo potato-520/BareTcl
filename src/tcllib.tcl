@@ -127,3 +127,59 @@ proc format {fmt args} {
 # --- 方言兼容性 Shim ---
 # t_scmp: 向后兼容旧的方言指令
 proc t_scmp {s1 s2} { return [string compare $s1 $s2] }
+
+# --- 列表范围操作 ---
+# lrange: 返回列表 list 中从 from 到 to 的子列表
+# 支持 end 关键字（表示最后一个元素索引）
+proc lrange {list from to_arg} {
+    set len [llength $list]
+    if {[__string_core compare $to_arg end] == 0} {
+        set to_val [expr $len - 1]
+    } else {
+        set to_val $to_arg
+    }
+    set result {}
+    set i $from
+    while {$i <= $to_val} {
+        if {$i >= $len} { break }
+        set elem [lindex $list $i]
+        if {[llength $result] > 0} { append result { } }
+        append result $elem
+        set i [expr $i + 1]
+    }
+    return $result
+}
+
+# --- 全局变量声明 (自举实现) ---
+# global: 在过程内建立对顶层命名空间变量的别名
+# 等价于对每个变量名执行 upvar #0 varname varname
+proc global {args} {
+    set i 0
+    set len [llength $args]
+    while {$i < $len} {
+        set vname [lindex $args $i]
+        uplevel 1 [list upvar #0 $vname $vname]
+        set i [expr $i + 1]
+    }
+}
+
+# --- 运行时自省 (自举实现) ---
+# info: 当前仅支持 info commands <name> 子指令
+# 底层查询由 __info_commands_core（extcmd.c）提供
+proc info {subcmd args} {
+    if {[__string_core compare $subcmd commands] == 0} {
+        if {[llength $args] > 0} {
+            return [__info_commands_core [lindex $args 0]]
+        }
+        return {}
+    }
+    error [list unknown info subcommand $subcmd]
+}
+
+# --- 信息检查辅助 ---
+# info_exists: 检查变量是否已定义（返回 1 或 0）
+proc info_exists {varName} {
+    set res [catch {uplevel 1 [list set $varName]} _]
+    if {$res == 0} { return 1 }
+    return 0
+}
