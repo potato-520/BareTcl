@@ -1099,29 +1099,40 @@ static tcl_i32 tcl_cmd_uplevel(TclCtx *context, tcl_i32 argument_count, tcl_u32 
         return TCL_ERROR; /* 参数数量不足，报错 */
     } /* 结束参数检查 */
     tcl_u32 target_parent_offset = context->curr_f; /* 初始指向当前活跃的执行栈帧 */
-    tcl_i32 back_steps = 1; /* 默认情况下向逻辑父级追溯一步 */
+    tcl_i32 back_steps = 1; /* 默认情况下向逻辑父级追溯一步（uplevel script 等效 uplevel 1 script） */
     tcl_i32 script_arg_index = 1; /* 默认认为脚本内容位于参数数组的第 1 位 */
     const tcl_u8 *first_argument_ptr = TO_PTR(context, argument_values[1]); /* 获取首个参数内容指针 */
-    /* 识别可选的层级参数，支持 #0 语法 */
+    /* 识别可选的层级参数：仅当有 2 个以上参数且首参数为数字或 # 开头时才视为层级参数 */
     if (argument_count > 2 && (first_argument_ptr[0] == '#' || (first_argument_ptr[0] >= '0' && first_argument_ptr[0] <= '9'))) {
-        if (first_argument_ptr[0] == '#') { /* 处理绝对层级标识符 */
+        if (first_argument_ptr[0] == '#') { /* 处理绝对层级标识符（如 #0 表示全局作用域） */
             if (first_argument_ptr[1] == '0' && first_argument_ptr[2] == 0) { /* 场景：#0 绝对全局作用域 */
                 target_parent_offset = TCL_NULL; /* 执行环境重定向为系统全局变量域 */
             } else { /* 其他绝对层级支持（BareTcl 简化为全局处理） */
                 target_parent_offset = TCL_NULL; /* 确保脚本执行在最顶层作用域 */
             }
-        } else { /* 处理常规相对层级数字 */
-            back_steps = t_atoi(first_argument_ptr); /* 解析用户指定的步数 */
-            tcl_i32 actual_skipped = 0; /* 记录已实际物理跳过的过程作用域数量 */
-            while (target_parent_offset != TCL_NULL && actual_skipped < back_steps) {
-                target_parent_offset = ((TclFrame*)TO_PTR(context, target_parent_offset))->parent; /* 沿着物理调用链向上回溯 */
-                if (target_parent_offset != TCL_NULL && !(((TclFrame*)TO_PTR(context, target_parent_offset))->flags & FRAME_SHARE_SCOPE)) {
-                    actual_skipped++; /* 仅当触及非共享作用域帧（如 proc 帧）时，才认为跨越了一个逻辑作用域层级 */
-                }
-            }
+            back_steps = 0; /* #N 形式已直接定位目标帧，无需再执行相对层级跳转循环 */
+        } else { /* 处理常规相对层级数字（如 uplevel 1、uplevel 2） */
+            back_steps = t_atoi(first_argument_ptr); /* 解析用户指定的相对层级步数 */
         }
         script_arg_index = 2; /* 参数位置修正：由于提供了层级字段，脚本内容后移至索引 2 */
     }
+    /* 设计目的：标准 Tcl uplevel N 语义是"在当前 proc 的第 N 层调用者的作用域中执行"。
+       正确算法：从当前帧出发，沿 scope 链找到当前所在的 proc 边界（scope==TCL_NULL 的帧），
+       再通过物理 parent 跳到调用者帧，重复 back_steps 次。
+       此设计保证无论 uplevel 从 proc 直接调用，还是从 proc 内的 while/catch 等共享帧调用，
+       都能正确穿越整个 proc 作用域边界，到达真正的调用者帧（而非中间的共享帧）。
+       当 back_steps==0（#0/#N 绝对定位）时跳过循环，直接使用已设定的目标帧。
+       当无显式数字参数（uplevel script）时，back_steps 默认为 1，等效 uplevel 1 script。 */
+    for (tcl_i32 level_idx = 0; level_idx < back_steps && target_parent_offset != TCL_NULL; level_idx++) {
+        TclFrame *search_frame = TO_PTR(context, target_parent_offset); /* 获取当前帧指针 */
+        /* 沿 scope 链向上找到 proc 边界（scope==TCL_NULL 的帧即为 proc 根作用域帧） */
+        while (search_frame->scope != TCL_NULL) { /* 如果当前帧是共享作用域帧（如 while body），则继续向上 */
+            target_parent_offset = search_frame->scope; /* 移向 scope 链的上一层 */
+            search_frame = TO_PTR(context, target_parent_offset); /* 刷新帧指针 */
+        } /* 退出时 search_frame 即为当前所在的 proc 帧（scope==TCL_NULL，独立作用域根） */
+        /* 跨越 proc 边界：通过物理 parent 链接跳到该 proc 的调用者帧 */
+        target_parent_offset = search_frame->parent; /* parent 指向调用者帧（逻辑上升一层） */
+    } /* 重复 back_steps 次，最终到达第 N 层调用者帧 */
     /* 分配并初始化新栈帧用于执行被提升层级的脚本内容 */
     tcl_u32 new_frame_offset = tcl_alc_t(context, sizeof(TclFrame)); /* 分配栈帧空间 */
     if (new_frame_offset == TCL_NULL) { /* 处理空间不足 */
