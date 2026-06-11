@@ -394,6 +394,9 @@ static tcl_u32 tcl_find_var_node(TclCtx *context, tcl_u32 search_frame_offset, c
             }                       /* 名称比对逻辑结束 */
             current_var_offset = variable_ptr->next; /* 移动至局部链表中的下一个节点继续搜索 */
         }                           /* 局部变量循环结束 */
+        if (frame_ptr->scope == TCL_NULL && (frame_ptr->flags & FRAME_IS_PROC)) { /* 判定是否已到达过程的逻辑边界，且该栈帧是一个独立的过程调用环境 */
+            return TCL_NULL;        /* 在局部过程作用域及其子帧中均未检索到变量，直接阻断以避免非法穿透访问全局变量 */
+        }                           /* 结束 proc 作用域拦截 */
         search_frame_offset = frame_ptr->scope; /* 沿着作用域链移动至父级作用域栈帧以继续回溯 */
     }                               /* 逻辑作用域链回溯结束 */
     tcl_u32 global_node_offset = context->g_vars; /* 若局部作用域全路径均未命中，则最终检索全局变量存储池 */
@@ -1019,7 +1022,8 @@ static tcl_i32 tcl_cmd_upvar(TclCtx *context, tcl_i32 argument_count, tcl_u32 *a
         }
         tcl_i32 actual_steps = 0; /* 记录实际跨越的非共享（即具有独立过程作用域）的层级数 */
         while (target_frame_offset != TCL_NULL && actual_steps < back_level) {
-            target_frame_offset = ((TclFrame*)TO_PTR(context, target_frame_offset))->parent; /* 沿着物理调用链向上回溯 */
+            TclFrame *search_frame = TO_PTR(context, target_frame_offset); /* 获取回溯中的当前栈帧 */
+            target_frame_offset = search_frame->scope; /* 沿着逻辑作用域链向上回溯以正确定位变量环境 */
             if (target_frame_offset != TCL_NULL && !(((TclFrame*)TO_PTR(context, target_frame_offset))->flags & FRAME_SHARE_SCOPE)) {
                 actual_steps++; /* 仅当触及非共享作用域帧（如 proc 帧）时，才计为一个有效逻辑层级 */
             }
@@ -1069,12 +1073,27 @@ static tcl_i32 tcl_cmd_upvar(TclCtx *context, tcl_i32 argument_count, tcl_u32 *a
     /* 物理搬运本地变量名 */
     t_mcpy(TO_PTR(context, name_storage_offset), TO_PTR(context, context->tmp_roots[13]), local_name_len);
     
-    TclFrame *active_frame_ptr = TO_PTR(context, context->curr_f); /* 重新定位当前栈帧 */
+    tcl_u32 active_target_frame_offset = context->curr_f; /* 从当前帧开始向上寻找作用域根部 */
+    while (active_target_frame_offset != TCL_NULL) { /* 循环向上回溯 */
+        TclFrame *parent_frame = TO_PTR(context, active_target_frame_offset); /* 获取帧指针 */
+        if (parent_frame->scope == TCL_NULL) { /* 遇到独立的逻辑作用域根部 */
+            break; /* 跳出循环 */
+        }                           /* 结束根部判断 */
+        active_target_frame_offset = parent_frame->scope; /* 沿着逻辑作用域链向上回溯 */
+    }                               /* 结束回溯循环 */
+    if (active_target_frame_offset != TCL_NULL) { /* 校验定位到的根部栈帧 */
+        TclFrame *root_frame = TO_PTR(context, active_target_frame_offset); /* 物理映射根部栈帧 */
+        if (!(root_frame->flags & FRAME_IS_PROC)) { /* 判断是否不为 proc 环境 */
+            active_target_frame_offset = TCL_NULL; /* 若为全局作用域，目标帧设为 TCL_NULL 以写入 g_vars */
+        }                           /* 结束 flags 判定 */
+    }                               /* 结束校验 */
+    TclFrame *active_frame_ptr = (active_target_frame_offset == TCL_NULL) ? 0 : TO_PTR(context, active_target_frame_offset); /* 映射目标帧物理地址 */
+    tcl_u32 *vars_head_ptr = active_frame_ptr ? &active_frame_ptr->vars : &context->g_vars; /* 选择链入局部变量链表还是全局变量链表 */
     link_variable_ptr = TO_PTR(context, context->tmp_roots[15]); /* 刷新链接节点物理指针 */
     link_variable_ptr->name = name_storage_offset; /* 绑定本地名称 */
     link_variable_ptr->val = context->tmp_roots[14]; /* 关键：链接至目标栈帧中的物理变量节点 */
-    link_variable_ptr->next = active_frame_ptr->vars; /* 将链接变量插入本地局部变量链表头部 */
-    active_frame_ptr->vars = context->tmp_roots[15]; /* 更新本地链表头 */
+    link_variable_ptr->next = *vars_head_ptr; /* 将链接变量插入本地局部变量链表头部 */
+    *vars_head_ptr = context->tmp_roots[15]; /* 更新本地链表头 */
     
     /* 任务顺利完成，清理所有保护根 */
     context->tmp_roots[12] = TCL_NULL; /* 清理根12 */
