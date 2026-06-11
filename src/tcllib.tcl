@@ -8,13 +8,8 @@ proc abs {x} {
     }; 
     return $x 
 }
+# incr: 已在 extcmd.c 中以 C 原生指令实现，支持 incr varName ?step? 语法，此处无需 Tcl 定义
 
-# --- 变量与流程控制 ---
-# incr: 变量自增
-proc incr {varName} {
-    upvar 1 $varName v
-    set v [expr $v + 1]
-}
 
 # for: 标准 for 循环实现
 proc for {start cond next body} {
@@ -45,19 +40,8 @@ proc foreach {var list body} {
 }
 
 # --- 列表操作 ---
-# lappend: 追加元素至列表变量
-proc lappend {varName val} {
-    upvar 1 $varName v
-    set tmp $v
-    if { [string compare $tmp {}] != 0 } {
-        append tmp { }
-        append tmp $val
-        set v $tmp
-    } else {
-        set v $val
-    }
-    return $v
-}
+# lappend: 已在 extcmd.c 中以 C 原生指令实现，支持 lappend varName val ?val ...? 多值语法，此处无需 Tcl 定义
+
 
 # lset: 修改列表中指定索引的元素
 proc lset {varName index val} {
@@ -91,7 +75,7 @@ proc string {subcmd args} {
     }
     set str [lindex $args 0]
     if { [__string_core compare $subcmd {length}] == 0 } {
-        return [llength $str] 
+        return [__string_core length $str] 
     }
     if { [__string_core compare $subcmd {index}] == 0 } {
         return [lindex $str [lindex $args 1]]
