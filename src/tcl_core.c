@@ -1020,14 +1020,17 @@ static tcl_i32 tcl_cmd_upvar(TclCtx *context, tcl_i32 argument_count, tcl_u32 *a
             back_level = t_atoi(first_param_ptr); /* 解析用户指定的相对回溯层数数值 */
             argument_start_index = 2; /* 变量名解析起始索引同步后移 */
         }
-        tcl_i32 actual_steps = 0; /* 记录实际跨越的非共享（即具有独立过程作用域）的层级数 */
-        while (target_frame_offset != TCL_NULL && actual_steps < back_level) {
-            TclFrame *search_frame = TO_PTR(context, target_frame_offset); /* 获取回溯中的当前栈帧 */
-            target_frame_offset = search_frame->scope; /* 沿着逻辑作用域链向上回溯以正确定位变量环境 */
-            if (target_frame_offset != TCL_NULL && !(((TclFrame*)TO_PTR(context, target_frame_offset))->flags & FRAME_SHARE_SCOPE)) {
-                actual_steps++; /* 仅当触及非共享作用域帧（如 proc 帧）时，才计为一个有效逻辑层级 */
-            }
-        }
+        /* 语义对齐：标准 Tcl upvar N 语义是"在当前 proc 的第 N 层调用者的作用域中寻找变量" */
+        tcl_u32 target_parent_offset = context->curr_f; /* 初始指向当前正在执行的活动帧 */
+        for (tcl_i32 level_idx = 0; level_idx < back_level && target_parent_offset != TCL_NULL; level_idx++) { /* 相对层级逐层回溯 */
+            TclFrame *search_frame = TO_PTR(context, target_parent_offset); /* 获取回溯中的当前帧物理指针 */
+            while (search_frame->scope != TCL_NULL) { /* 沿 scope 链向上穿透所有共享作用域子帧直到过程边界 */
+                target_parent_offset = search_frame->scope; /* 移动到 scope 链 the 上一层 */
+                search_frame = TO_PTR(context, target_parent_offset); /* 刷新物理帧指针 */
+            } /* 退出时 search_frame 即为当前所处的过程根帧 */
+            target_parent_offset = search_frame->parent; /* 跨越过程边界：通过物理 parent 跳到其调用者帧 */
+        } /* 结束相对层级逐层回溯 */
+        target_frame_offset = target_parent_offset; /* 将最终确定的调用者帧作为检索变量的目标帧 */
     }
     context->tmp_roots[12] = argument_values[argument_start_index];     /* 在内存分配前保护目标变量名对象 */
     context->tmp_roots[13] = argument_values[argument_start_index + 1]; /* 保护本地即将建立链接的变量名对象 */
