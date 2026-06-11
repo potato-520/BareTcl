@@ -451,6 +451,12 @@ static tcl_i32 tcl_set_var(TclCtx *context, tcl_u32 frame_offset, tcl_u32 name_o
         } /* 结束作用域属性检查 */
         target_frame_offset = parent_frame->scope; /* 沿着逻辑作用域链向上递归回溯 */
     } /* 结束作用域穿透循环 */
+    if (target_frame_offset != TCL_NULL) { /* 检查回溯定位的目标栈帧是否有效 */
+        TclFrame *root_frame = TO_PTR(context, target_frame_offset); /* 解析逻辑根部栈帧的物理指针 */
+        if (!(root_frame->flags & FRAME_IS_PROC)) { /* 判断逻辑根部帧是否不带有过程环境标志 */
+            target_frame_offset = TCL_NULL; /* 若非过程环境则归为全局作用域，目标帧设为 TCL_NULL 以写入 g_vars */
+        } /* 结束过程环境标志判断 */
+    } /* 结束目标栈帧有效性判定 */
     context->tmp_roots[6] = target_frame_offset; /* 保护最终确定的目标栈帧偏移量 */
     
     /* 在堆内存池中分配新的变量描述符结构体空间 */
@@ -1005,18 +1011,7 @@ static tcl_i32 tcl_cmd_upvar(TclCtx *context, tcl_i32 argument_count, tcl_u32 *a
     /* 识别可选的 level 参数，支持 #0 语法 */
     if (argument_count > 3 && first_param_ptr[0] == '#') { /* 绝对层级判定 */
         if (first_param_ptr[1] == '0' && first_param_ptr[2] == 0) { /* 专门处理 #0 全局作用域 */
-            /* 设计说明：#0 表示"顶层命名空间帧"。顶层脚本执行时的帧是调用链的根帧，
-               其 parent == TCL_NULL。我们沿 parent 链追踪到最顶层帧，而非使用 TCL_NULL
-               （TCL_NULL 代表内部 g_vars 表，与顶层帧是不同的存储区域） */
-            tcl_u32 top_frame_offset = context->curr_f; /* 从当前帧开始向上追踪 */
-            while (top_frame_offset != TCL_NULL) { /* 沿 parent 链追溯 */
-                TclFrame *top_frame_ptr = TO_PTR(context, top_frame_offset); /* 获取帧指针 */
-                if (top_frame_ptr->parent == TCL_NULL) { /* 到达最顶层帧（parent 为空） */
-                    break; /* 找到了，停止回溯 */
-                } /* 结束顶层判定 */
-                top_frame_offset = top_frame_ptr->parent; /* 继续向上一层 */
-            } /* 结束顶层帧追踪 */
-            target_frame_offset = top_frame_offset; /* #0 指向调用链最顶层帧 */
+            target_frame_offset = TCL_NULL; /* 直接将 #0 目标帧指向 TCL_NULL 以映射至全局变量表 g_vars */
         } else { /* 处理其他绝对层级（BareTcl 简化处理：目前优先保证 #0 兼容性） */
             target_frame_offset = TCL_NULL; /* 暂时退化为全局处理以满足测试需求 */
         } /* 结束 #N 绝对层级处理 */
