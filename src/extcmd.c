@@ -154,7 +154,10 @@ static int tcl_cmd_lappend(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_valu
     tcl_u32 need_len = old_len; /* 从旧值长度开始累计 */
     for (tcl_i32 idx = 2; idx < arg_count; idx++) { /* 遍历所有待追加元素 */
         tcl_u32 val_len = t_slen(TO_PTR(context, arg_values[idx])); /* 获取元素字符串长度 */
-        need_len += 1 + val_len; /* 加上空格分隔符和元素本身的长度 */
+        need_len += val_len; /* 先累计元素本身长度 */
+        if (old_len > 0 || idx > 2) { /* 仅在旧值非空或不是首个新元素时才需要分隔空格 */
+            need_len += 1; /* 累计空格分隔符长度 */
+        }
     }
     /* 分配合并后字符串的物理空间 */
     tcl_u32 new_buf = tcl_alc_p(context, need_len + 1); /* +1 存放字符串结束符 */
@@ -168,18 +171,17 @@ static int tcl_cmd_lappend(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_valu
         t_mcpy(dest, TO_PTR(context, context->tmp_roots[10]), old_len);
         dest += old_len; /* 移动写入指针 */
     }
+    tcl_i32 has_output = (old_len > 0); /* 标记当前输出缓存中是否已有内容 */
     for (tcl_i32 idx = 2; idx < arg_count; idx++) { /* 依次追加每个新元素 */
-        *dest++ = ' '; /* 写入空格分隔符（列表元素之间用空格分隔） */
+        if (has_output) { /* 只有在已有内容时才写分隔空格 */
+            *dest++ = ' '; /* 写入列表分隔符 */
+        }
         tcl_u32 val_len = t_slen(TO_PTR(context, arg_values[idx]));
         t_mcpy(dest, TO_PTR(context, arg_values[idx]), val_len); /* 写入元素值 */
         dest += val_len; /* 更新写入指针 */
+        has_output = 1; /* 标记输出已包含内容 */
     }
     *dest = 0; /* 写入字符串结束符 */
-    /* 去除开头多余的空格（当旧值为空时会多一个前导空格） */
-    tcl_u8 *result_ptr = TO_PTR(context, context->tmp_roots[11]);
-    if (result_ptr[0] == ' ') {     /* 如果首字符是空格（旧列表为空的情况） */
-        context->tmp_roots[11] += 1; /* 偏移量加 1，跳过前导空格 */
-    }
     /* 写回变量（使用当前帧作用域） */
     if (tcl_set_var(context, context->curr_f, arg_values[1], context->tmp_roots[11]) != TCL_OK) {
         context->tmp_roots[10] = context->tmp_roots[11] = TCL_NULL;
