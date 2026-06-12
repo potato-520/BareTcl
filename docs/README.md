@@ -10,6 +10,8 @@ BareTcl is more than just an interpreter; it is a bare-metal Tcl Shell. It is de
 
 ## Zero-Dependency, Built from Scratch
 
+Many engines labeled as "embedded" (such as Lua or JavaScript) are often an unrealistic fantasy for true bare-metal porting. They typically depend on standard Libc (e.g., `malloc`/`free`), OS scheduling, or complex floating-point libraries. For most developers, porting them to resource-constrained bare-metal hardware is an immense task that rarely succeeds. Those "embedded" solutions requiring Libc are not truly low-level embedded.
+
 BareTcl is highly portable because it avoids external libraries. To ensure stability on bare-metal, we implemented everything ourselves, imposing **almost no requirements** on your system:
 
 - **No `malloc` / No `free`**: Fully based on a fixed-size static Arena memory pool. Completely eliminates the risk of heap fragmentation.
