@@ -143,27 +143,6 @@ proc format {fmt args} {
     return $res
 }
 
-# --- 列表范围操作 ---
-# lrange: 返回列表 list 中从 from 到 to 的子列表
-# 支持 end 关键字（表示最后一个元素索引）
-proc lrange {list from to_arg} {
-    set len [llength $list]
-    if {[__string_core compare $to_arg end] == 0} {
-        set to_val [expr $len - 1]
-    } else {
-        set to_val $to_arg
-    }
-    set result {}
-    set i $from
-    while {$i <= $to_val} {
-        if {$i >= $len} { break }
-        set elem [lindex $list $i]
-        if {[llength $result] > 0} { append result { } }
-        append result $elem
-        set i [expr $i + 1]
-    }
-    return $result
-}
 
 # --- 全局变量声明 (自举实现) ---
 # global: 在过程内建立对顶层命名空间变量的别名

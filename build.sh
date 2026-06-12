@@ -16,7 +16,7 @@ nm -u tcl_core.o | grep -v tcl_hal_puts | grep . && (echo "ERROR: Found external
 echo "Libc-Free check passed."
 
 echo "[3/4] Compiling Demo Executable..."
-gcc examples/demo.c -o tclsh
+gcc -O3 examples/demo.c -o tclsh
 
 echo "[4/4] Running Industrial Validation Suite..."
 # Use timeout to prevent infinite loops and capture all output
