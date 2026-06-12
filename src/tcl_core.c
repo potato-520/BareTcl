@@ -209,28 +209,46 @@ typedef struct {                    /* 定义 ObjHeader 对象头结构体 */
 /* 上下文结构体相对于 Arena 的对齐起始偏移 */
 #define HS ((sizeof(TclCtx) + 15) & ~15) /* 执行 16 字节对齐计算，确保 Arena 数据的内存对齐安全性 */
 /* 空行：逻辑分段 */
-/* GC 标记函数：采用深度优先算法递归标记所有从根节点可达的活跃对象 */
-static void mark_obj(TclCtx *context, tcl_u32 target_object_offset) { /* 函数入口：标记活跃对象及其引用链 */
-    if (target_object_offset == TCL_NULL) { /* 忽略无效的空逻辑偏移量 */
-        return;                     /* 直接返回，无需执行任何标记操作 */
-    }                               /* 判空逻辑结束 */
-    if (target_object_offset < HS || target_object_offset >= context->p_top) { /* 执行基本的 Arena 物理边界检查 */
-        return;                     /* 越界地址通常为静态字符串或非法引用，不予处理 */
-    }                               /* 边界检查结束 */
-    /* 根据数据区偏移量回溯物理地址，获取紧挨在其前的对象头结构体指针 */
-    ObjHeader *obj_header = (ObjHeader*)TO_PTR(context, target_object_offset - sizeof(ObjHeader)); /* 定位对象头物理指针 */
-    if (obj_header->size_and_flags & OBJ_MARK_BIT) { /* 检查该对象是否在本轮 GC 中已被标记过 */
-        return;                     /* 若已标记则说明已处理，跳过以防止无限递归死循环 */
-    }                               /* 标记位状态检查结束 */
-    obj_header->size_and_flags |= OBJ_MARK_BIT; /* 将该对象正式标记为活跃状态，确保其不会被回收 */
-    if (obj_header->size_and_flags & OBJ_VAR_BIT) { /* 判断该对象是否为包含其他引用的变量容器 */
-        /* 将数据载荷区强制转换为变量结构体指针，以便递归访问其内部关联成员 */
-        TclVar *variable_ptr = (TclVar*)TO_PTR(context, target_object_offset); /* 转换为变量物理指针 */
-        mark_obj(context, variable_ptr->name); /* 递归标记变量名对象，确保名称字符串存活 */
-        mark_obj(context, variable_ptr->val);  /* 递归标记变量值对象，确保其引用的内容存活 */
-        mark_obj(context, variable_ptr->next); /* 递归标记链表中的后续节点，实现完整作用域链标记 */
-    }                               /* 变量容器深层标记处理结束 */
-}                                   /* 函数执行完毕 */
+/* GC 标记函数：采用显式工作链迭代标记，严格避免 C 递归栈 */
+static void mark_obj(TclCtx *context, tcl_u32 target_object_offset) { /* 函数入口：从根对象出发迭代标记所有可达对象 */
+    tcl_u32 work_head = TCL_NULL;    /* 工作链表头：存放待处理对象的数据区偏移量 */
+    if (target_object_offset != TCL_NULL && target_object_offset >= HS && target_object_offset < context->p_top) { /* 仅当根对象处于 Arena 有效区时才入链 */
+        ObjHeader *root_header = (ObjHeader*)TO_PTR(context, target_object_offset - sizeof(ObjHeader)); /* 定位根对象头指针 */
+        if (!(root_header->size_and_flags & OBJ_MARK_BIT)) { /* 若根对象尚未被标记 */
+            root_header->size_and_flags |= OBJ_MARK_BIT; /* 先写入存活标记，防止重复入链 */
+            root_header->forward = work_head; /* 临时复用 forward 字段链接到当前工作链头 */
+            work_head = target_object_offset; /* 将根对象压入工作链，等待后续展开 */
+        }                           /* 根对象重复判定结束 */
+    }                               /* 根对象入链判定结束 */
+    while (work_head != TCL_NULL) { /* 持续处理工作链，直到所有可达对象均被展开 */
+        tcl_u32 current_object_offset = work_head; /* 取出链表头对象作为当前处理对象 */
+        ObjHeader *current_header = (ObjHeader*)TO_PTR(context, current_object_offset - sizeof(ObjHeader)); /* 定位当前对象头 */
+        work_head = current_header->forward; /* 弹栈：切换到下一个待处理对象 */
+        if (current_header->size_and_flags & OBJ_VAR_BIT) { /* 仅变量容器对象需要继续展开其内部引用 */
+            TclVar *current_variable_ptr = (TclVar*)TO_PTR(context, current_object_offset); /* 获取变量容器数据区指针 */
+            tcl_u32 child_offsets[3]; /* 本地固定数组：依次保存 name/val/next 三个子引用 */
+            child_offsets[0] = current_variable_ptr->name; /* 子引用 0：变量名字符串对象 */
+            child_offsets[1] = current_variable_ptr->val;  /* 子引用 1：变量值对象或链接目标 */
+            child_offsets[2] = current_variable_ptr->next; /* 子引用 2：链表后继变量节点 */
+            for (tcl_i32 child_index = 0; child_index < 3; child_index++) { /* 线性遍历三个子引用并尝试入链 */
+                tcl_u32 child_offset = child_offsets[child_index]; /* 读取当前子引用偏移量 */
+                if (child_offset == TCL_NULL) { /* 空引用无需处理 */
+                    continue;           /* 直接跳过本次子引用处理 */
+                }                       /* 空引用分支结束 */
+                if (child_offset < HS || child_offset >= context->p_top) { /* 越界引用通常是静态区或非法句柄 */
+                    continue;           /* 不参与本轮 Arena 标记 */
+                }                       /* 边界过滤结束 */
+                ObjHeader *child_header = (ObjHeader*)TO_PTR(context, child_offset - sizeof(ObjHeader)); /* 定位子对象头 */
+                if (child_header->size_and_flags & OBJ_MARK_BIT) { /* 若该子对象已标记则无需重复入链 */
+                    continue;           /* 跳过重复对象，防止环路重复遍历 */
+                }                       /* 重复判定结束 */
+                child_header->size_and_flags |= OBJ_MARK_BIT; /* 首次遇到该子对象，写入存活标记 */
+                child_header->forward = work_head; /* 压栈：将旧工作链头挂到子对象 forward */
+                work_head = child_offset; /* 更新工作链头为新入链的子对象 */
+            }                           /* 子引用遍历结束 */
+        }                               /* 变量容器展开结束 */
+    }                                   /* 迭代标记主循环结束 */
+}                                       /* 函数执行完毕 */
 /* 空行：逻辑分段 */
 /* 核心垃圾回收函数：实现 Slide Compacting 算法，物理性压缩 Arena 以整理碎片 */
 void tcl_gc(TclCtx *context) {      /* 函数入口：启动垃圾回收机制 */

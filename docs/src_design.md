@@ -177,3 +177,39 @@ while (insert_frame_offset != TCL_NULL) {
 *   **内层表达式保护**：在分配子栈帧 `sub_expression_frame_offset` 之前，将已清洗去括号的内层表达式偏移量 `inner_offset` 挂载到 `context->tmp_roots[0]` 中进行根保护。子帧成功分配后，再次从临时根中恢复并修正 `inner_offset`，最后安全地将其绑定至子栈帧的指令指针 `sub_frame_ptr->script` 上。
 *   *注*：每次保护结束后，必须立即将 `context->tmp_roots[0]` 置为 `TCL_NULL` 以释放保护，防止在后续 GC 周期中产生错误的垃圾标记。
 
+---
+
+## 8. GC 标记阶段的绝对无栈化改造（mark_obj 非递归化）
+
+### 8.1 问题背景
+当前 `mark_obj` 采用 C 递归深度优先搜索。该实现虽可利用 `OBJ_MARK_BIT` 防止环路死递归，但在“超长变量链 + GC 触发”场景下，递归深度仍与对象图深度线性相关，违背 BareTcl “绝对无栈化”原则，并在极端平台栈预算下存在调用栈溢出风险。
+
+### 8.2 设计目标
+1. GC 标记阶段禁止任何 C 递归调用。
+2. 不新增 Arena 常驻结构，不改变 `tcl_gc` 对外行为与回收结果。
+3. 在不引入额外堆内存分配的前提下，保持对链式变量图（`name/val/next`，含 `upvar` 链接）的完整可达性标记。
+
+### 8.3 核心算法：基于对象头 `forward` 字段的工作链迭代标记
+在标记阶段，临时复用 `ObjHeader.forward` 作为“待处理工作链 next 指针”（LIFO 栈语义）：
+1. 定义 `work_head`（初始 `TCL_NULL`）。
+2. `push_if_unmarked(offset)`：
+   - 若 `offset` 非法（`TCL_NULL` 或越界）则忽略；
+   - 读取对象头，若已带 `OBJ_MARK_BIT` 则忽略；
+   - 设置 `OBJ_MARK_BIT`；
+   - 写入 `obj_header->forward = work_head`；
+   - 更新 `work_head = offset`。
+3. 先对根对象执行一次 `push_if_unmarked(root)`。
+4. `while (work_head != TCL_NULL)` 循环：
+   - 弹出 `current = work_head`；
+   - 读取 `current_header->forward` 作为下一个 `work_head`；
+   - 若 `current` 是 `OBJ_VAR_BIT` 对象，则对 `name/val/next` 依次执行 `push_if_unmarked(...)`。
+
+### 8.4 正确性与 GC 阶段相容性
+1. `forward` 字段在标记阶段后会在“迁移地址计算阶段”被完整重写，因此临时复用不会污染最终搬迁映射。
+2. 由于 `push` 前先判 `OBJ_MARK_BIT`，环路与重复引用只会入链一次，时间复杂度保持 O(N)。
+3. 算法仅使用固定数量局部变量，不消耗 C 调用栈深度，满足“绝对无栈化”约束。
+
+### 8.5 约束与边界
+1. 仅标记 Arena 低地址对象区（`HS <= offset < p_top`）；静态字符串与越界句柄被安全忽略。
+2. 该改造不改变根集合定义（`result/g_vars/tmp_roots/活跃帧 script/vars/cond/body/argv`）。
+3. 改造后 `tcl_gc` 的压缩、重定位、指针修复流程无需调整。
