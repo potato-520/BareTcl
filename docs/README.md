@@ -51,10 +51,12 @@ By integrating BareTcl, you can transform an ordinary serial port into a powerfu
 ## Developer's Guide
 
 ### 1. Bare-Metal Porting Steps
-1. **Implement HAL Layer**: Provide a simple `void tcl_hal_puts(const tcl_u8 *s)`.
-2. **Initialize Arena**: Call `tcl_init(buffer, size)`.
-3. **Drive the Shell**: Pass each byte received from the serial port into `shell_handle_char(&sh, byte, "> ")`.
-4. **Parse and Execute**: When the shell function returns `1`, pass `sh.line` to `tcl_eval` for execution.
+1. **Implement HAL Layer**: Provide a low-level output interface `void tcl_hal_puts(const tcl_u8 *s)` for Shell display and logging.
+2. **Initialize Arena**: Prepare a static memory block (e.g., `char arena[64KB]`) and call `tcl_init(arena, size)`.
+3. **Get Context**: The BareTcl context structure `TclCtx` is located at the head of the arena. Define `TclCtx *ctx = (TclCtx *)arena`.
+4. **Load Bootstrap (Recommended)**: Call `tcl_load_bootstrap(ctx)` to enable advanced syntax like `for`, `foreach`, etc.
+5. **Drive the Shell**: After calling `shell_init(&sh)`, pass each byte received from the serial port into `shell_handle_char(&sh, byte, "> ")`.
+6. **Parse and Execute**: When the shell function returns `1`, pass `ctx` and `sh.line` to `tcl_eval(ctx, sh.line)` for execution.
 
 ### 2. Extending with C
 ```c

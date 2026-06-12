@@ -51,10 +51,12 @@ BareTcl を統合することで、普通のシリアルポートを強力な動
 ## 開発者ガイド
 
 ### 1. ベアメタル移植の手順
-1. **HAL 層の実装**：シンプルな `void tcl_hal_puts(const tcl_u8 *s)` を提供。
-2. **アリーナの初期化**：`tcl_init(buffer, size)` を呼び出す。
-3. **シェルの驱动**：シリアルポートから受信した各バイトを `shell_handle_char(&sh, byte, "> ")` に渡す。
-4. **解析と実行**：シェル関数が `1` を返したとき、`sh.line` を `tcl_eval` に渡して実行。
+1. **HAL 層の実装**：Shell の表示やログ出力のために、低レベル出力インタフェース `void tcl_hal_puts(const tcl_u8 *s)` を提供します。
+2. **アリーナの初期化**：静的メモリブロック（例：`char arena[64KB]`）を準備し、`tcl_init(arena, size)` を呼び出します。
+3. **コンテキストの取得**：BareTcl のコンテキスト構造体 `TclCtx` はアリーナの先頭に配置されます。`TclCtx *ctx = (TclCtx *)arena` と定義します。
+4. **ブートストラップのロード（推奨）**：`for` や `foreach` などの高度な構文を有効にするため、`tcl_load_bootstrap(ctx)` を呼び出します。
+5. **シェルの駆動**：`shell_init(&sh)` を呼び出した後、シリアルポートから受信した各バイトを `shell_handle_char(&sh, byte, "> ")` に渡します。
+6. **解析と実行**：シェル関数が `1` を返したとき、`tcl_eval(ctx, sh.line)` を呼び出して実行します。
 
 ### 2. C 言語による拡張
 ```c

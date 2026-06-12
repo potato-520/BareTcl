@@ -51,10 +51,12 @@ BareTcl 坚持零依赖。为了实现真正的裸机运行，我们自主实现
 ## 开发人员指南
 
 ### 1. 裸机移植步骤
-1. **实现 HAL 层**：提供一个简单的 `void tcl_hal_puts(const tcl_u8 *s)`。
-2. **初始化 Arena**：调用 `tcl_init(buffer, size)`。
-3. **驱动 Shell**：将串口收到的每个字节传入 `shell_handle_char(&sh, byte, "> ")`。
-4. **解析执行**：当 Shell 函数返回 `1` 时，将 `sh.line` 传入 `tcl_eval` 执行。
+1. **实现 HAL 层**：提供底层输出接口 `void tcl_hal_puts(const tcl_u8 *s)`，用于 Shell 显示和日志。
+2. **初始化内存池**：准备一块静态内存（如 `char arena[64KB]`），调用 `tcl_init(arena, size)`。
+3. **获取上下文**：BareTcl 的上下文结构体 `TclCtx` 位于内存池头部，定义 `TclCtx *ctx = (TclCtx *)arena`。
+4. **加载自举库（推荐）**：调用 `tcl_load_bootstrap(ctx)`，以支持 `for`, `foreach` 等高级语法。
+5. **驱动 Shell**：调用 `shell_init(&sh)` 后，将串口收到的每个字节传入 `shell_handle_char(&sh, byte, "> ")`。
+6. **解析执行**：当 Shell 返回 `1` 时，调用 `tcl_eval(ctx, sh.line)`。
 
 ### 2. 使用 C 语言扩展
 ```c
