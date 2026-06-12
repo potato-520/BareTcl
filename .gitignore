@@ -10,3 +10,4 @@ test_output.log
 # IDEs and OS
 .vscode/
 .DS_Store
+GEMINI.md
