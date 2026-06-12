@@ -1,5 +1,7 @@
 # Tclsh.v2 Miniature Core Software Design Specification (v5.1)
 
+[中文版](./design.zh_CN.md) | [日本語版](./design.ja.md)
+
 ## 1. Introduction
 
 ### 1.1 System Goals

@@ -1,5 +1,7 @@
 # Tclsh.v2 微型内核心软件设计规格书 (v5.1)
 
+[English](./design.md) | [日本語版](./design.ja.md)
+
 ## 1. 概述 (Introduction)
 
 ### 1.1 系统目标

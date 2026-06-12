@@ -1,5 +1,7 @@
 # Tclsh.v2 小型コア・ソフトウェア設計仕様書 (v5.1)
 
+[English](./design.md) | [中文版](./design.zh_CN.md)
+
 ## 1. 概要 (Introduction)
 
 ### 1.1 システム目標
