@@ -260,3 +260,71 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 | `global` | 全局变量声明 | uplevel, upvar |
 | `info` | 运行时自省（仅 info commands） | __info_commands_core |
 | `info_exists` | 变量存在性检查 | catch, uplevel |
+
+---
+
+## 九、超级质检暴力测试结果（2026-06-12）
+
+> 范围：仅针对当前已编译二进制 `./tclsh` 做黑盒测试（边界值、异常输入、压力输入）。  
+> 参考基线：`/usr/bin/tclsh8.6`（用于标准 Tcl 对齐比对）。
+
+### 9.1 发现的不符合项（需后续整改）
+
+| 分类 | 用例脚本（最小复现） | 期望（标准 Tcl） | 当前 `./tclsh` 实际 |
+|---|---|---|---|
+| 条件真值语义 | `if {false} {puts bad} else {puts ok}` | `ok` | `bad` |
+| 条件真值语义 | `if {off} {puts bad} else {puts ok}` | `ok` | `bad` |
+| 条件真值语义 | `if {no} {puts bad} else {puts ok}` | `ok` | `bad` |
+| 条件真值语义 | `set c [catch {if {abc} {puts x}} m]; puts $c` | `1`（非法布尔表达式） | 输出 `x` 且 `0` |
+| while 条件判定 | `set i 0; while {false} {set i [expr {$i+1}]}; puts $i` | `0` | `Error: false` |
+| 双引号命令替换 | `puts "r=[expr {1+2}]"` | `r=3` | `r=[expr {1+2}]` |
+| 列表索引 end | `puts [lindex {a b c} end]` | `c` | `a` |
+| 列表索引 end（长列表） | `set l {a b c d e f g h i j}; puts [lindex $l end]` | `j` | `a` |
+| 列表切片 end-1 | `puts [lrange {a b c d} 0 end-1]` | `a b c` | `a b c d` |
+| 列表切片 end-2 | `set l {a b c d e f g h i j}; puts [lrange $l 0 end-2]` | `a b c d e f g h` | `a b c d e f g h i j` |
+| 压力/GC（append） | `set s {}; set i 0; while {$i < 1500} {append s a; set i [expr {$i+1}]}; puts [string length $s]` | `1500` | `Error: a` |
+| 压力/GC（lappend） | `set l {}; set i 0; while {$i < 1200} {lappend l $i; set i [expr {$i+1}]}; puts [llength $l]` | `1200` | `Error: 0` |
+| 递归/命令替换稳定性 | `proc f {n} {if {$n==0} {return 1}; return [expr {$n+[f [expr {$n-1}]]}]}; puts [f 12]` | `79` | `Error:`（空消息） |
+| 异常输入诊断 | `set c [catch {puts [expr {1+2}} m]; puts $c; puts $m` | `1` + `missing close-bracket` | 输出 `1+` 且 `Error: 0` |
+| 异常输入诊断 | `set c [catch {set no_such_var} msg]; puts $c; puts $msg` | `1` + 明确变量不存在错误 | `1` + `Error: 1`（信息不可用） |
+
+### 9.2 备注
+
+1. 以上用例覆盖了设计文档关注的“标准 Tcl 对齐”重点：`if/while` 条件判定、`expr/命令替换`、错误语义、列表操作及压力场景。
+2. 本次仅记录问题，不包含任何源码修改；后续可按“单点突破”原则逐项修复并回归 `tests/tests.tcl`。
+
+---
+
+## 十、设计对齐审计（2026-06-12）
+
+> 本节为“仅审计、不改代码”的现状评估，基准文档为 `docs/design.zh_CN.md`。
+
+### 10.1 总结结论
+
+当前实现与设计文档在主干架构上**总体同向**（静态 Arena、双游标、`tcl_eval` 无递归 FSM），但仍存在若干“规范级偏差”，主要集中在：
+1. 三层指令架构边界（部分非环境命令下沉到 `extcmd.c`）
+2. 标准 Tcl 语义对齐完整度（条件真值、双引号内命令替换、`info commands` 行为）
+3. 基本类型规约执行一致性（局部仍使用原生 `int`）
+4. “绝对无栈化”在 GC 标记阶段的边缘冲突（递归标记）
+
+### 10.2 偏差清单（含证据）
+
+| 偏差项 | 设计要求 | 代码证据 | 影响 |
+|---|---|---|---|
+| 扩展层职责越界 | `extcmd.c` 主要承载环境相关命令（文档示例为 `puts/exit`） | `src/extcmd.c` 注册 `append/lappend/incr/__string_core/__info_commands_core`（L232-236） | 三层分层纯度下降，核心语义与平台扩展边界变模糊 |
+| 高级逻辑部分下沉 C 层 | 可由 Core Atoms 组合的高级逻辑应优先 Tcl 自举 | `incr/lappend` 在 `extcmd.c` 直接实现（L140-226）；`tcllib.tcl` 明示无需 Tcl 定义（L11, L43） | 自举层可移植性与可替换性下降 |
+| 方言兼容未彻底消退 | 设计要求逐步消除方言行为 | `tcllib.tcl` 仍保留 `proc t_scmp` shim（L112-113） | 与标准 Tcl 命令面并存，存在历史包袱 |
+| 双引号内 `[...]` 未执行 | 标准 Tcl 对齐应支持双引号内命令替换 | `tcl_str_interp` 仅处理转义与 `$var`（`src/tcl_core.c` L557, L583, L618），未处理 `[...]`；双引号分支调用该函数（L1819） | `"x=[cmd]"` 语义不对齐，影响脚本兼容性 |
+| `if/while` 真值判定过简 | 条件判定要尽量对齐标准 Tcl | 当前使用“非空且首字节非`0`为真”（`src/tcl_core.c` L2316, L2419） | 对 `false/no/off` 等标准布尔字面量兼容不足 |
+| `info commands` 功能不完整 | 错误处理与行为需向标准 Tcl 靠拢 | 无参分支返回空（`src/tcl_core.c` L2558-2560），`tcllib.tcl` 也 `return {}`（L158） | 与常见 Tcl 期望（列出命令）不一致 |
+| 类型规约未完全贯彻 | 文档要求统一固定宽度类型，避免原生 `int` | `src/extcmd.c` 多处 `static int ...`（L6,16,21,66,101,140,196）；`src/tcl_core.c` 有 `for (int i...)`（L2013） | 风格与可移植性规约不一致 |
+| “绝对无栈化”边缘冲突 | 强调无栈化 FSM | `mark_obj` 使用递归（`src/tcl_core.c` L213, L229-231） | 极深链路下仍有 C 调用栈风险 |
+
+### 10.3 已对齐的关键项（确认）
+
+| 项目 | 对齐情况 | 代码证据 |
+|---|---|---|
+| 零 Libc（核心层） | 已对齐（`src/tcl_core.c` 未包含标准库头） | `src/tcl_core.c` 顶部无 `#include <...>` |
+| 静态 Arena + 双游标 | 已对齐 | `TclCtx` 中 `p_top/t_bot`，`tcl_alc_p/tcl_alc_t` 实现 |
+| `tcl_eval` 无递归 FSM 主循环 | 已对齐 | `while (context->curr_f != TCL_NULL)` + 多状态 `switch`（`src/tcl_core.c`） |
+| 相对偏移引用与 GC 紧凑化 | 已对齐 | `TO_PTR` 偏移模型、`tcl_gc` 中重定位与指针修正 |
