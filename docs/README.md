@@ -2,7 +2,7 @@
 
 **A highly compact Tcl interpreter core designed for minimal resources, rapid porting, and bare-metal execution.**
 
-BareTcl is more than just an interpreter; it is a **formidable weapon** for embedded developers. It is designed to completely liberate you from tedious serial communication logic, manual protocol parsing, and fragile ad-hoc state machines. BareTcl provides a near "zero-cost" dynamic scripting integration experience for bare-metal systems.
+BareTcl is more than just an interpreter; it is a bare-metal Tcl Shell. It is designed to completely liberate you from tedious serial communication logic, manual protocol parsing, and fragile ad-hoc state machines. BareTcl provides a near "zero-cost" dynamic scripting integration experience for bare-metal systems.
 
 [中文版](../README.md) | [日本語版](./README.ja.md)
 
