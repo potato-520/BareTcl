@@ -1,63 +1,63 @@
 # BareTcl
 
-**The world's most compact industrial-grade Tcl interpreter core.**
+**全球最精简的工业级 Tcl 解释器内核。**
 
-BareTcl is more than just an interpreter; it is a **formidable weapon** for embedded developers. It is designed to completely liberate you from tedious serial communication logic, manual protocol parsing, and fragile ad-hoc state machines. BareTcl provides a near "zero-cost" dynamic scripting integration experience for bare-metal systems.
+BareTcl 不仅仅是一个解释器，它是嵌入式开发者的**神兵利器**。它旨在将你从繁琐无聊的串口收发逻辑、手动协议解析以及脆弱s ad-hoc 状态机中彻底解放出来。BareTcl 为裸机系统提供了一种近乎“零成本”的动态脚本集成体验。
 
-[中文版](./docs/README.zh_CN.md) | [日本語版](./README.ja.md)
-
----
-
-## "Extreme Zero-Dependency" Philosophy
-
-BareTcl is the most portable interpreter you will ever encounter. It imposes **almost no requirements** on your system environment:
-
-- **No `malloc` / No `free`**: Fully based on a fixed-size static Arena memory pool. Completely eliminates the risk of heap fragmentation.
-- **No `libc`**: Pure, independent C code. No dependency on `<stdio.h>`, `<string.h>`, or any standard library headers.
-- **No C Stack Support**: Fully stackless Finite State Machine (FSM) architecture. No matter how deep the recursion is in the Tcl script, it will **never** cause a C language call stack overflow.
-- **No `setjmp` / `longjmp`**: Deterministic control flow without reliance on complex jumping mechanisms.
-- **No Complex Build**: Single-file core, supports compilation with `-ffreestanding -nostdlib`.
+[English](./docs/README.md) | [日本語版](./docs/README.ja.md)
 
 ---
 
-## Why Choose BareTcl? (Say Goodbye to Boring Development)
+## “极致零依赖”哲学
 
-For decades, embedded developers have been forced to repeatedly write dull serial command parsers. BareTcl puts an end to this.
+BareTcl 是你所能见到的最易移植的解释器。它对你的系统环境**几乎没有任何要求**：
 
-By integrating BareTcl, you can transform an ordinary serial port into a powerful dynamic console. You no longer need to hard-code parsing logic for every feature; instead, you can execute complex Tcl logic, loops, and conditionals directly at runtime. It is a true **Embedded Swiss Army Knife**, instantly giving static MCUs flexible programming capabilities.
-
----
-
-## Core Features
-
-- **Industrial-Grade Reliability**: Built specifically for mission-critical systems with a strict zero-dependency strategy.
-- **Smart Interactive Shell**: Built-in lightweight line editor supporting backspace, arrow key cursor movement, history of the last 16 commands, and intelligent multi-line input (auto-identifying unclosed braces).
-- **Atomic 18-Instruction Core**: The C core contains only 18 atomic instructions. All high-level logic (such as `for`, `incr`, `foreach`) is implemented via Tcl script bootstrapping.
-- **Compacting GC**: Utilizes a moving/compacting garbage collector to ensure the Arena space remains fragment-free even under thousands of object turnovers.
-- **Bit-Level Determinism**: Strictly uses fixed-width types like `tcl_i32` and `tcl_u8` to ensure consistent behavior across platforms.
+- **无需 `malloc` / 无需 `free`**：完全基于固定大小的静态 Arena 内存池。彻底杜绝堆碎片风险。
+- **无需 `libc`**：纯净独立的 C 代码。不依赖 `<stdio.h>`、`<string.h>` 或任何标准库头文件。
+- **无需 C 栈支持**：完全无栈化 (Stackless) 的状态机架构。无论 Tcl 脚本中的递归有多深，**永远不会**导致 C 语言调用栈溢出。
+- **无需 `setjmp` / `longjmp`**：确定性的控制流，不依赖复杂的跳转机制。
+- **无需复杂构建**：单文件核心，支持 `-ffreestanding -nostdlib` 编译。
 
 ---
 
-## Powerful Performance & Reliability Verification
+## 为什么选择 BareTcl？（从此告别无聊的开发）
 
-- **Self-Bootstrap Completeness**: The core instruction set is highly complete, and the standard library is built entirely by Tcl itself and statically integrated.
-- **8-Queens Solver**: Runs the 8-Queens algorithm perfectly in a bare-metal environment, proving its ability to handle deep recursion and complex lists.
-- **GC Extreme Pressure**: Withstood tens of thousands of variable churn tests in an Arena space of only 64KB, with zero leaks and zero fragmentation.
+数十年来，嵌入式开发者一直被迫重复编写乏味的串口指令解析器。BareTcl 的出现终结了这一现状。
+
+通过集成 BareTcl，你可以将普通的串口转化为一个强大的动态控制台。你不再需要为每一个功能硬编码解析逻辑，而是可以直接在运行中执行复杂的 Tcl 逻辑、循环和条件判断。它是真正的**嵌入式瑞士军刀**，让静态的 MCU 瞬间拥有灵活的编程能力。
 
 ---
 
-## Developer's Guide
+## 核心特性
 
-### 1. Bare-Metal Porting Steps
-1. **Implement HAL Layer**: Provide a simple `void tcl_hal_puts(const tcl_u8 *s)`.
-2. **Initialize Arena**: Call `tcl_init(buffer, size)`.
-3. **Drive the Shell**: Pass each byte received from the serial port into `shell_handle_char(&sh, byte, "> ")`.
-4. **Parse and Execute**: When the shell function returns `1`, pass `sh.line` to `tcl_eval` for execution.
+- **工业级可靠性**：专为任务关键型系统构建，坚持零依赖策略。
+- **智能交互外壳 (Shell)**：内置轻量级行编辑器，支持退格、方向键光标移动、最近 16 条历史命令切换，以及智能多行输入（自动识别未闭合的花括号）。
+- **原子 18 指令核心**：C 内核仅包含 18 条原子指令。所有高级逻辑（如 `for`, `incr`, `foreach`）均通过 Tcl 脚本自举实现。
+- **紧凑化 GC**：采用移动/紧凑化垃圾回收器，确保 Arena 空间在万级对象更迭下依然保持零碎片。
+- **位级确定性**：严格使用 `tcl_i32`, `tcl_u8` 等固定宽度类型，确保跨平台行为一致。
 
-### 2. Extending with C
+---
+
+## 强悍的性能与可靠性验证
+
+- **自举完备性 (Self-Bootstrap)**：核心指令集高度完备，标准库完全由 Tcl 自身构建并静态集成。
+- **8皇后解算 (8-Queens)**：在裸机环境下完美运行 8 皇后算法，证明了其处理深度递归与复杂列表的能力。
+- **GC 极限压力**：在仅 64KB 的 Arena 空间内承受了数万次变量 churn 测试，零泄露，零碎片。
+
+---
+
+## 开发人员指南
+
+### 1. 裸机移植步骤
+1. **实现 HAL 层**：提供一个简单的 `void tcl_hal_puts(const tcl_u8 *s)`。
+2. **初始化 Arena**：调用 `tcl_init(buffer, size)`。
+3. **驱动 Shell**：将串口收到的每个字节传入 `shell_handle_char(&sh, byte, "> ")`。
+4. **解析执行**：当 Shell 函数返回 `1` 时，将 `sh.line` 传入 `tcl_eval` 执行。
+
+### 2. 使用 C 语言扩展
 ```c
 static tcl_i32 my_hardware_cmd(TclCtx *ctx, tcl_i32 argc, tcl_u32 *argv) {
-    // Implement logic to control hardware directly here...
+    // 在这里实现直接控制硬件的逻辑...
     return TCL_OK;
 }
 tcl_register_c_cmd((const tcl_u8 *)"hw_ctrl", my_hardware_cmd);
@@ -65,14 +65,14 @@ tcl_register_c_cmd((const tcl_u8 *)"hw_ctrl", my_hardware_cmd);
 
 ---
 
-## Quick Start (Linux Demo)
+## 快速开始 (Linux 演示)
 ```bash
-# Auto-compile and start the advanced Shell with Raw Mode support
+# 自动编译并启动具备 Raw Mode 支持的高级 Shell
 bash build.sh
 ./tclsh
 ```
 
 ---
 
-## License
-Licensed under the Apache License, Version 2.0.
+## 开源协议
+采用 Apache License, Version 2.0 协议授权。
