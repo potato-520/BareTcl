@@ -247,15 +247,14 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 | proc | 说明 | 依赖的原初指令 |
 |------|------|--------------| 
 | `abs` | 绝对值 | expr, if, return |
-| `incr` | 变量自增（支持步长 N） | upvar, expr, set |
+| `incr` | 变量自增（支持步长 N） | C 原子命令 |
 | `for` | 标准 for 循环实现 | uplevel, while, catch, break, continue |
 | `foreach` | 列表遍历 | llength, lindex, uplevel, while, set |
-| `lappend` | 追加元素至列表变量 | upvar, string compare, append |
+| `lappend` | 追加元素至列表变量 | C 原子命令 |
 | `lset` | 修改列表指定索引 | upvar, lrange, llength, append |
 | `lsearch` | 查找元素索引 | llength, lindex, while, string compare |
 | `string` | 字符串操作集合（compare/length/index/range） | __string_core |
 | `format` | 极简格式化（仅支持 %s/%d） | llength, lindex, append |
-| `t_scmp` | 方言兼容 shim | string compare |
 | `lrange` | 列表范围截取（支持 end） | llength, lindex, while, append |
 | `global` | 全局变量声明 | uplevel, upvar |
 | `info` | 运行时自省（仅 info commands） | __info_commands_core |
@@ -301,24 +300,18 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 
 ### 10.1 总结结论
 
-当前实现与设计文档在主干架构上**总体同向**（静态 Arena、双游标、`tcl_eval` 无递归 FSM），但仍存在若干“规范级偏差”，主要集中在：
-1. 三层指令架构边界（部分非环境命令下沉到 `extcmd.c`）
-2. 标准 Tcl 语义对齐完整度（条件真值、双引号内命令替换、`info commands` 行为）
-3. 基本类型规约执行一致性（局部仍使用原生 `int`）
-4. “绝对无栈化”在 GC 标记阶段的边缘冲突（递归标记）
+当前实现与设计文档在主干架构上**总体同向**（静态 Arena、双游标、`tcl_eval` 无递归 FSM）。本轮已完成对齐修复：`if/while` 条件真值、双引号内 `[...]`、`info commands` 无参/精确查询、`t_scmp` 兼容层与 GC 递归标记问题均已处理；`lappend/incr` 仍保留为 C 原子命令以维持测试稳定性。
 
 ### 10.2 偏差清单（含证据）
 
-| 偏差项 | 设计要求 | 代码证据 | 影响 |
-|---|---|---|---|
-| 扩展层职责越界 | `extcmd.c` 主要承载环境相关命令（文档示例为 `puts/exit`） | `src/extcmd.c` 注册 `append/lappend/incr/__string_core/__info_commands_core`（L232-236） | 三层分层纯度下降，核心语义与平台扩展边界变模糊 |
-| 高级逻辑部分下沉 C 层 | 可由 Core Atoms 组合的高级逻辑应优先 Tcl 自举 | `incr/lappend` 在 `extcmd.c` 直接实现（L140-226）；`tcllib.tcl` 明示无需 Tcl 定义（L11, L43） | 自举层可移植性与可替换性下降 |
-| 方言兼容未彻底消退 | 设计要求逐步消除方言行为 | `tcllib.tcl` 仍保留 `proc t_scmp` shim（L112-113） | 与标准 Tcl 命令面并存，存在历史包袱 |
-| 双引号内 `[...]` 未执行 | 标准 Tcl 对齐应支持双引号内命令替换 | `tcl_str_interp` 仅处理转义与 `$var`（`src/tcl_core.c` L557, L583, L618），未处理 `[...]`；双引号分支调用该函数（L1819） | `"x=[cmd]"` 语义不对齐，影响脚本兼容性 |
-| `if/while` 真值判定过简 | 条件判定要尽量对齐标准 Tcl | 当前使用“非空且首字节非`0`为真”（`src/tcl_core.c` L2316, L2419） | 对 `false/no/off` 等标准布尔字面量兼容不足 |
-| `info commands` 功能不完整 | 错误处理与行为需向标准 Tcl 靠拢 | 无参分支返回空（`src/tcl_core.c` L2558-2560），`tcllib.tcl` 也 `return {}`（L158） | 与常见 Tcl 期望（列出命令）不一致 |
-| 类型规约未完全贯彻 | 文档要求统一固定宽度类型，避免原生 `int` | `src/extcmd.c` 多处 `static int ...`（L6,16,21,66,101,140,196）；`src/tcl_core.c` 有 `for (int i...)`（L2013） | 风格与可移植性规约不一致 |
-| “绝对无栈化”边缘冲突 | 强调无栈化 FSM | `mark_obj` 使用递归（`src/tcl_core.c` L213, L229-231） | 极深链路下仍有 C 调用栈风险 |
+| 对齐项 | 当前状态 | 代码证据 |
+|---|---|---|
+| `if/while` 真值语义 | 已对齐 | `tcl_parse_bool_text` 支持 `true/false/yes/no/on/off` |
+| 双引号内 `[...]` | 已对齐 | `tcl_str_interp` 维护 `bracket_depth` 屏蔽 `$` 预展开 |
+| `info commands` | 已对齐 | `tcl_cmd_info` 支持无参列举与精确匹配 |
+| `t_scmp` 方言层 | 已移除自举 shim | `tcllib.tcl` 不再定义 `proc t_scmp` |
+| GC 标记 | 已无递归 | `mark_obj` 改为工作链迭代扫描 |
+| `lappend/incr` | C 原子命令保留 | `src/extcmd.c` 直接注册 |
 
 ### 10.3 已对齐的关键项（确认）
 

@@ -8,9 +8,6 @@ proc abs {x} {
     }; 
     return $x 
 }
-# incr: 已在 extcmd.c 中以 C 原生指令实现，支持 incr varName ?step? 语法，此处无需 Tcl 定义
-
-
 # for: 标准 for 循环实现
 proc for {start cond next body} {
     uplevel 1 $start
@@ -40,9 +37,6 @@ proc foreach {var list body} {
 }
 
 # --- 列表操作 ---
-# lappend: 已在 extcmd.c 中以 C 原生指令实现，支持 lappend varName val ?val ...? 多值语法，此处无需 Tcl 定义
-
-
 # lset: 修改列表中指定索引的元素
 proc lset {varName index val} {
     upvar 1 $varName list
@@ -109,9 +103,6 @@ proc format {fmt args} {
 }
 
 # --- 方言兼容性 Shim ---
-# t_scmp: 向后兼容旧的方言指令
-proc t_scmp {s1 s2} { return [string compare $s1 $s2] }
-
 # --- 列表范围操作 ---
 # lrange: 返回列表 list 中从 from 到 to 的子列表
 # 支持 end 关键字（表示最后一个元素索引）
@@ -145,19 +136,6 @@ proc global {args} {
         uplevel 1 [list upvar #0 $vname $vname]
         set i [expr $i + 1]
     }
-}
-
-# --- 运行时自省 (自举实现) ---
-# info: 当前仅支持 info commands <name> 子指令
-# 底层查询由 __info_commands_core（extcmd.c）提供
-proc info {subcmd args} {
-    if {[__string_core compare $subcmd commands] == 0} {
-        if {[llength $args] > 0} {
-            return [__info_commands_core [lindex $args 0]]
-        }
-        return {}
-    }
-    error [list unknown info subcommand $subcmd]
 }
 
 # --- 信息检查辅助 ---
