@@ -1,6 +1,6 @@
 # BareTcl
 
-**A highly compact industrial-grade Tcl interpreter core.**
+**A highly compact Tcl interpreter core designed for minimal resources, rapid porting, and bare-metal execution.**
 
 BareTcl is more than just an interpreter; it is a **formidable weapon** for embedded developers. It is designed to completely liberate you from tedious serial communication logic, manual protocol parsing, and fragile ad-hoc state machines. BareTcl provides a near "zero-cost" dynamic scripting integration experience for bare-metal systems.
 
