@@ -8,9 +8,9 @@ BareTcl is more than just an interpreter; it is a **formidable weapon** for embe
 
 ---
 
-## "Extreme Zero-Dependency" Philosophy
+## Zero-Dependency, Built from Scratch
 
-BareTcl is the most portable interpreter you will ever encounter. It imposes **almost no requirements** on your system environment:
+BareTcl is highly portable because it avoids external libraries. To ensure stability on bare-metal, we implemented everything ourselves, imposing **almost no requirements** on your system:
 
 - **No `malloc` / No `free`**: Fully based on a fixed-size static Arena memory pool. Completely eliminates the risk of heap fragmentation.
 - **No `libc`**: Pure, independent C code. No dependency on `<stdio.h>`, `<string.h>`, or any standard library headers.
