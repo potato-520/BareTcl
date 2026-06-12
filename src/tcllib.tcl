@@ -8,6 +8,21 @@ proc abs {x} {
     }; 
     return $x 
 }
+# incr: 变量自增，支持可选步长参数，保持与标准 Tcl 的基础语义一致
+proc incr {varName args} {
+    upvar 1 $varName value
+    set args_marker "<$args>"
+    if {[string compare $args_marker "<>"] == 0} {
+        set value [expr {$value + 1}]
+        return $value
+    }
+    set step [lindex $args 0]
+    if {[string compare "<[lindex $args 1]>" "<>"] != 0} {
+        error "wrong # args: should be \"incr varName ?increment?\""
+    }
+    set value [expr {$value + $step}]
+    return $value
+}
 # for: 标准 for 循环实现
 proc for {start cond next body} {
     uplevel 1 $start
@@ -37,6 +52,32 @@ proc foreach {var list body} {
 }
 
 # --- 列表操作 ---
+# lappend: 向列表变量追加一个或多个元素，使用列表元素表示法保持空格安全
+proc lappend {varName args} {
+    upvar 1 $varName list_value
+    set existing_value {}
+    if {[catch {set existing_value $list_value}] != 0} {
+        set existing_value {}
+    }
+    set args_marker "<$args>"
+    if {[string compare $args_marker "<>"] == 0} {
+        set list_value $existing_value
+        return $list_value
+    }
+    set arg_count [llength $args]
+    set current_value $existing_value
+    set index 0
+    while {$index < $arg_count} {
+        set element_value [lindex $args $index]
+        if {$current_value ne ""} {
+            append current_value { }
+        }
+        append current_value [list $element_value]
+        set index [expr {$index + 1}]
+    }
+    set list_value $current_value
+    return $list_value
+}
 # lset: 修改列表中指定索引的元素
 proc lset {varName index val} {
     upvar 1 $varName list
@@ -102,7 +143,6 @@ proc format {fmt args} {
     return $res
 }
 
-# --- 方言兼容性 Shim ---
 # --- 列表范围操作 ---
 # lrange: 返回列表 list 中从 from 到 to 的子列表
 # 支持 end 关键字（表示最后一个元素索引）

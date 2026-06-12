@@ -8,6 +8,7 @@
 3. **`tcl_str_interp` 方括号屏蔽设计**：解决双引号及表达式中 `[cmd $var]` 子命令变量被提前替换导致的分词裂变 Bug。
 4. **`expr` 表达式中 `eq` 和 `ne` 运算符实现**：提供对标准 Tcl 字符串等于与不等比较的原生支持。
 5. **`string length` 核心原初化实现**：将 `string length` 迁移至 C 原生指令，避免在 Tcl 自举层因使用 `llength` 产生非空格字符串长度计算错误。
+6. **`lappend` / `incr` 自举回迁**：将可由脚本组合完成的列表追加与数值自增重新放回 `tcllib.tcl`，保持 Core Atoms 与 Bootstrap Library 的边界清晰。
 
 ---
 

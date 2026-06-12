@@ -247,10 +247,10 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 | proc | 说明 | 依赖的原初指令 |
 |------|------|--------------| 
 | `abs` | 绝对值 | expr, if, return |
-| `incr` | 变量自增（支持步长 N） | C 原子命令 |
+| `incr` | 变量自增（支持步长 N） | tcllib.tcl 自举实现 |
 | `for` | 标准 for 循环实现 | uplevel, while, catch, break, continue |
 | `foreach` | 列表遍历 | llength, lindex, uplevel, while, set |
-| `lappend` | 追加元素至列表变量 | C 原子命令 |
+| `lappend` | 追加元素至列表变量 | tcllib.tcl 自举实现 |
 | `lset` | 修改列表指定索引 | upvar, lrange, llength, append |
 | `lsearch` | 查找元素索引 | llength, lindex, while, string compare |
 | `string` | 字符串操作集合（compare/length/index/range） | __string_core |
@@ -300,7 +300,7 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 
 ### 10.1 总结结论
 
-当前实现与设计文档在主干架构上**总体同向**（静态 Arena、双游标、`tcl_eval` 无递归 FSM）。本轮已完成对齐修复：`if/while` 条件真值、双引号内 `[...]`、`info commands` 无参/精确查询、`t_scmp` 兼容层与 GC 递归标记问题均已处理；`lappend/incr` 仍保留为 C 原子命令以维持测试稳定性。
+当前实现与设计文档在主干架构上**总体同向**（静态 Arena、双游标、`tcl_eval` 无递归 FSM）。本轮已完成对齐修复：`if/while` 条件真值、双引号内 `[...]`、`info commands` 无参/精确查询、`t_scmp` 兼容层与 GC 递归标记问题均已处理；`lappend/incr` 已回迁到 `tcllib.tcl` 自举层。
 
 ### 10.2 偏差清单（含证据）
 
@@ -311,7 +311,7 @@ docs/session_handoff.md 了解上一会话的工作成果和当前状态，
 | `info commands` | 已对齐 | `tcl_cmd_info` 支持无参列举与精确匹配 |
 | `t_scmp` 方言层 | 已移除自举 shim | `tcllib.tcl` 不再定义 `proc t_scmp` |
 | GC 标记 | 已无递归 | `mark_obj` 改为工作链迭代扫描 |
-| `lappend/incr` | C 原子命令保留 | `src/extcmd.c` 直接注册 |
+| `lappend/incr` | 已回迁自举层 | `src/tcllib.tcl` 定义 `proc lappend` / `proc incr` |
 
 ### 10.3 已对齐的关键项（确认）
 
