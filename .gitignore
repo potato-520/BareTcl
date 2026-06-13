@@ -1,7 +1,7 @@
 # BareTcl Build Artifacts
 tclsh
 *.o
-src/tcllib.c
+
 
 # Development Logs
 *.log
@@ -11,3 +11,13 @@ test_output.log
 .vscode/
 .DS_Store
 GEMINI.md
+
+# Local Arduino Port symlinks/folders
+ESP32_ports/src
+
+# ESP-IDF Build Artifacts
+ESP32_ports/build/
+ESP32_ports/sdkconfig
+ESP32_ports/sdkconfig.old
+ESP32_ports/*.zip
+

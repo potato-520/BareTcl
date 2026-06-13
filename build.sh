@@ -37,5 +37,5 @@ else
 fi
 
 echo "Cleaning up..."
-rm tcl_core.o src/tcllib.c test_output.log
+rm tcl_core.o test_output.log
 echo "Build and test completed successfully."

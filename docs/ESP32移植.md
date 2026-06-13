@@ -22,19 +22,17 @@
 ## 2. 移植设计与技术可行性分析 (Technical Analysis)
 
 ### 2.1 物理环境与代码现状
-1.  **ESP32 源码现状**：[ESP32Relay4.ino](file:///home/chenming/BareTcl/ESP32_ports/ESP32Relay4.ino) 是一个标准的 Arduino 风格 C++ 源码。它开启了 `Serial.begin(115200)`，配置了 4 路继电器和 4 路按钮，并运行了一个非阻塞的 `WebServer` 处理 WiFi 控制请求。
+1.  **ESP32 源码现状**：[main.c](file:///home/chenming/BareTcl/ESP32_ports/main/main.c) 是一个标准的 ESP-IDF 风格 C 源码。它开启了 UART 串口输出，配置了 4 路继电器和 4 路按钮，并运行了一个非阻塞的 WebServer 处理 WiFi 控制请求。
 2.  **BareTcl 源码现状**：[tcl_core.c](file:///home/chenming/BareTcl/src/tcl_core.c) 采用纯 C 语言编写，实现了无栈 FSM 和内存 Arena。但在物理上，解释器的 `tcl_load_bootstrap` 依赖于由 python 工具生成并在 `tcl_core.c` 尾部静态包含的 [tcllib.c](file:///home/chenming/BareTcl/src/tcllib.c)。
 
 ### 2.2 核心移植设计方案
 
-#### A. C++ 兼容性设计 (Linkage Integration)
-由于 `.ino` 采用 C++ 编译器编译，而 BareTcl 是纯 C。为避免函数名重载导致的符号链接错误，需要在 `ESP32Relay4.ino` 中使用 `extern "C"` 包装 BareTcl 的核心源文件包含：
-```cpp
-extern "C" {
-#include "../src/tcl_core.c"
-#include "../src/extcmd.c"
-#include "../src/baretcl_shell.c"
-}
+#### A. 源文件引入 (Source File Integration)
+由于项目在 ESP-IDF C 语言环境中编译，我们可以直接包含 BareTcl 的 C 源码文件：
+```c
+#include "../../src/tcl_core.c"
+#include "../../src/extcmd.c"
+#include "../../src/baretcl_shell.c"
 ```
 *注：在编译前，必须运行 `python3 tools/tcl2c.py src/tcllib.tcl src/tcllib.c` 确保依赖文件生成。*
 
@@ -143,7 +141,7 @@ ESP32 (WROOM) 拥有约 520KB SRAM。去除 WiFi 协议栈、Web 服务器以及
 *   **严重等级**：`High (高)` —— WiFi 核心控制接口在执行脚本时彻底失效。
 *   **立案判定**：**正式立案**。
 *   **物理与代码依据**：
-    *   **L2 证据**：[ESP32Relay4.ino:L77-L80](file:///home/chenming/BareTcl/ESP32_ports/ESP32Relay4.ino#L77-L80) Web 服务器轮询 `esp_server.handleClient()` 采用单线程非阻塞机制。
+    *   **L2 证据**：[main.c](file:///home/chenming/BareTcl/ESP32_ports/main/main.c) Web 服务器轮询和处理采用 ESP-IDF 事件与 task 调度机制。
     *   **L1 证据**：当 Tcl 在执行耗时计算或 GC 垃圾整理（百毫秒级）时，WebServer 无法调度。TCP 握手包积压，超过客户端超时限制直接报错。
 *   **质证焦点**：
     *   多线程方案（FreeRTOS 独立 Task）会面临 BareTcl 内部 Arena **非线程安全**（没有互斥锁）的内存并发损坏风险（引发 Guru Meditation Panic）。
@@ -206,7 +204,7 @@ sequenceDiagram
 
     Note over A,D: 阶段 3：代码实现 (在确认无 Critical 缺陷后)
     A->>B: 派发代码修改指令 (在后续会话中)
-    B->>A: 编写修改后的 ESP32Relay4.ino 并保证编译通过
+    B->>A: 编写修改后的 main.c 并保证编译通过
     A->>User: 交付最终文档与代码设计
 ```
 
@@ -218,5 +216,71 @@ sequenceDiagram
 | :--- | :--- | :--- | :--- |
 | **M1: 移植计划评审** | `docs/ESP32移植.md` | 用户确认并同意 Proceed 授权 | 方案架构对齐，四方角色实体化定义完毕。 |
 | **M2: 设计缺陷清零** | 子智能体辩论记录、WDT与多任务方案设计 | 监理（Agent D）出具 of 合规性报告，Critical 风险点闭环 | 鲇鱼（Agent C）提出的所有 Critical 挑战均被 Resolved（或被 A 裁决）。 |
-| **M3: 移植代码交付** | 修改后的 `ESP32Relay4.ino` | 本地交叉编译通过（如使用 Arduino CLI/PlatformIO），串口输出正常 | 代码零编译错误，`tcl_init` 运行成功，串口输出 BareTcl 提示符。 |
+| **M3: 移植代码交付** | 修改后的 `main.c` | 本地交叉编译通过（使用 ESP-IDF CLI），串口输出正常 | 代码零编译错误，`tcl_init` 运行成功，串口输出 BareTcl 提示符。 |
 | **M4: 硬件联调测试** | GPIO 操作演示，多命令联调，长时间运行 WDT 稳定性校验 | 连接串口终端进行交互式命令测试；编写测试 Tcl 脚本持续运行 | Tcl 命令行能够成功控制继电器电平，运行 1 小时内无 watchdog 触发复位。 |
+
+---
+
+## 6. ESP32 移植实战踩坑与解决记录 (Pitfalls & Solutions)
+
+在实际的板机联调与系统集成过程中，项目遇到了以下关键的技术陷阱（Pitfalls），并通过针对性的底层设计进行了彻底解决：
+
+### 踩坑 1：CPU 密集运算触发看门狗复位 (Task Watchdog Triggered)
+*   **物理表现**：运行复杂递归计算（如 `queens` 8 皇后求解）时，串口每隔 5 秒会打印一次 `Task watchdog got triggered` 并输出寄存器转储（`tcl_task` 独占 CPU）。
+*   **原理剖析**：
+    *   `tcl_task` 创建时优先级为 5（高于 IDLE 空闲任务的 0 级）。在运行密集计算时，Tcl 解释器的状态机大循环会长时间独占 CPU。
+    *   虽然代码中设计了 `TCL_YIELD_HOOK()` 释放 CPU 资源，但其调用了 `vTaskDelay(pdMS_TO_TICKS(1))`。
+    *   在 ESP-IDF 默认节拍率为 100Hz (`configTICK_RATE_HZ = 100`) 时，1ms 经过 `pdMS_TO_TICKS` 计算后整除为 `0`。
+    *   `vTaskDelay(0)` 并不会让出 CPU 给低优先级的 IDLE 任务，使得监控 IDLE 任务的任务看门狗（TWDT）超时触发。
+*   **解决方案**：
+    将 `vTaskDelay` 的挂起参数改为强制阻塞 1 个 Tick 周期（即 `vTaskDelay(1)`），并把让出频率优化为每 2000 次状态机迭代触发一次，以兼顾执行效率与系统健康：
+    ```c
+    #define TCL_YIELD_HOOK() do { \
+        static uint32_t __yield_cnt = 0; \
+        if (++__yield_cnt >= 2000) { \
+            __yield_cnt = 0; \
+            vTaskDelay(1); \
+        } \
+    } while(0)
+    ```
+
+### 踩坑 2：标准库指令缺失导致 `for`/`foreach` 报 Command not found
+*   **物理表现**：输入 `for {set i 0} {$i < 20} {incr i}` 报错 `Command not found error. argc=5 Cmd name: 'for'`。
+*   **原理剖析**：
+    *   BareTcl 核心 C 代码（`src/tcl_core.c`）在 `tcl_init` 时仅注册了 18 个基础原子命令。
+    *   `for`、`foreach`、`incr`、`lappend` 等高级脚本控制流保存在 [src/tcllib.tcl](file:///home/chenming/BareTcl/src/tcllib.tcl) 自举脚本库中。
+    *   ESP32 的 `main.c` 在任务初始化时仅调用 `tcl_eval` 载入了端口自定义库 `esp32_bootstrap`，却遗漏了加载 BareTcl 标准自举库的操作。
+*   **解决方案**：
+    1. 在 `main.c` 任务初始化中，在载入端口自定义库之前，显式调用 `tcl_load_bootstrap(ctx)` 载入标准库；
+    2. 在 `ESP32_ports/build.sh` 中增加标准自举库的转换生成逻辑，使修改后的标准库脚本能够无感同步编译进固件：
+       ```bash
+       python3 ../tools/tcl2c.py ../src/tcllib.tcl ../src/tcllib.c
+       ```
+
+### 踩坑 3：串口输入与回显必须按回车才有响应 (ICANON 阻塞与缓冲问题)
+*   **物理表现**：在串口终端输入字符时，控制台无任何实时回显，必须按下回车键（`\r` 或 `\n`）后，前面输入的一整行字符才会一次性显示并被处理。
+*   **原理剖析**：
+    *   标准 C 库的 `stdin` 和 `stdout` 流在默认情况下是行缓冲（Line Buffered）的。
+    *   ESP-IDF 默认控制台驱动处于规范模式（Canonical Mode, `ICANON`），会等待换行符出现才将输入提交给应用程序，并且由底层驱动自动处理回显，这与 Tcl 自带的交互式行编辑器（`baretcl_shell.c`）发生严重冲突。
+*   **解决方案**：
+    1. **流缓冲禁用**：在 `main` 任务与 `tcl_task` 启动时立刻执行 `setvbuf`，禁用输入输出流缓冲：
+       ```c
+       setvbuf(stdout, NULL, _IONBF, 0);
+       setvbuf(stdin, NULL, _IONBF, 0);
+       ```
+    2. **驱动绑定与模式调整**：配置 `stdin` 描述符为非阻塞模式 (`O_NONBLOCK`)，并利用 `termios` 结构体禁用规范模式与回显标志（清除 `ICANON | ECHO | ECHOE ...`）：
+       ```c
+       struct termios t;
+       if (tcgetattr(fileno(stdin), &t) == 0) {
+           t.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | ISIG | IEXTEN);
+           tcsetattr(fileno(stdin), TCSANOW, &t);
+       }
+       ```
+    3. **USB JTAG / UART 驱动共存**：调用 `usb_serial_jtag_vfs_use_driver()` 及 `uart_vfs_dev_use_driver(UART_NUM_0)`，确保原生 USB-JTAG 通道与物理串口 VFS 均以 Raw 模式直接对齐行编辑器。
+
+### 踩坑 4：系统日志输出导致终端颜色发生污染 (ANSI Color Pollution)
+*   **物理表现**：当 ESP-IDF 系统后台打印绿色 `WIFI` 或红色 `ERROR` 日志时，日志结束时未重置终端属性，导致 Tcl 交互式命令行和后续输入的回显字符全部变成了绿底或红字。
+*   **原理剖析**：
+    *   终端控制台（如 PuTTY、idf.py monitor）通过 ANSI 转义序列（如 `\x1b[32m`）变色。若外部日志输出完毕后没有发送重置命令 `\x1b[0m`，终端就会一直保持上一次的着色状态。
+*   **解决方案**：
+    在 `baretcl_shell.c` 中，于刷新行显示 `shell_refresh`、打印续行符 `.. `、以及打印主提示符 `> ` 之前，显式输出重置序列 `\x1b[0m`。

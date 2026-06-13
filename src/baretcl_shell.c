@@ -59,11 +59,17 @@ static void shell_clear_line(TclShell *shell) {
 /* 刷新 Shell 提示符与输入行显示 */
 static void shell_refresh(TclShell *shell, const char *prompt) {
     shell_clear_line(shell);    /* 首先清空当前行 */
+    if (baretcl_use_ansi) {
+        tcl_hal_puts((const tcl_u8*)"\x1b[0m"); /* 重置颜色属性 */
+    }
     tcl_hal_puts((const tcl_u8*)prompt); /* 重新输出提示符 */
     tcl_hal_puts(shell->line);  /* 输出缓冲区内容 */
     /* 修正光标物理位置 */
     if (shell->cursor < shell->len) {
         tcl_hal_puts((const tcl_u8*)"\r"); /* 回到行首 */
+        if (baretcl_use_ansi) {
+            tcl_hal_puts((const tcl_u8*)"\x1b[0m");
+        }
         tcl_hal_puts((const tcl_u8*)prompt); /* 重出提示符 */
         for (tcl_u32 index = 0; index < shell->cursor; index++) { /* 步进至光标位 */
             tcl_u8 char_buf[2] = {shell->line[index], 0}; /* 构造单字符字符串 */
@@ -225,7 +231,11 @@ tcl_i32 shell_handle_char(TclShell *shell, tcl_u8 character, const char *prompt)
                 shell->line[shell->len++] = '\n'; /* 自动补入换行符 */
                 shell->line[shell->len] = 0;
                 shell->cursor = shell->len;
-                tcl_hal_puts((const tcl_u8*)".. "); /* 输出续行提示符 */
+                if (baretcl_use_ansi) {
+                    tcl_hal_puts((const tcl_u8*)"\x1b[0m.. "); /* 输出续行提示符 */
+                } else {
+                    tcl_hal_puts((const tcl_u8*)".. ");
+                }
             }
             return 0;               /* 指令未完成 */
         }
