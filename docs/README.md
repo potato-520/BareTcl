@@ -8,6 +8,14 @@ BareTcl is more than just an interpreter; it is a bare-metal Tcl Shell. It is de
 
 ---
 
+### 🚀 Revolutionary Dual-Channel Control Experience
+
+BareTcl now supports dual-channel, real-time synchronized operation for both the **physical serial console (UART/USB-JTAG)** and the **browser-based web terminal (WebSocket & xterm.js)** in the ESP32 port! You can debug commands via the traditional serial port, or access the console through a premium, glassmorphic dark-mode web panel to toggle relays visually, check real-time command output, and view live Network Ping diagnostics.
+
+![BareTcl Web Console](./websocket_BareTcl.png)
+
+---
+
 ## Zero-Dependency, Built from Scratch
 
 Many engines labeled as "embedded" (such as Lua or JavaScript) are often an unrealistic fantasy for true bare-metal porting. They typically depend on standard Libc (e.g., `malloc`/`free`), OS scheduling, or complex floating-point libraries. For most developers, porting them to resource-constrained bare-metal hardware is an immense task that rarely succeeds. Those "embedded" solutions requiring Libc are not truly low-level embedded.
