@@ -34,7 +34,7 @@
 
 ### 3. [DEFECT-03] 串口与网络输入流共享单例编辑器状态 (High)
 *   **问题描述**：串口输入（`fgetc(stdin)`）与网络 WebSocket 输入共用在 `tcl_task` 栈上分配的单例 `static TclShell tcl_sh` 编辑器状态。在双端同时打字输入时，字符会交叉插入 `tcl_sh.line` 缓冲区产生严重的乱码，可能引发非法指令注入风险，且两端 Backspace 退格回显冲突导致排版混乱。
-*   **证据等级**：L2 (源码逻辑推演)
+*   **证据等级**：L2 (源码/网页分析)
 *   **审计意见**：CONFIRMED (正式立案，危害等级 High)
 
 ### 4. [DEFECT-04] `console.html` 交互粗糙且缺失核心继电器控制 (Medium)
@@ -64,7 +64,7 @@
         ```
 
 ### 2. DEFECT-02 修复：最大接收帧限制
-*   在 `ws_handler` 提取帧头部后、分配内存前强行进行越界截断检查，配置最大允许字节数为 **1024 字节**：
+*   in `ws_handler` 提取帧头部后、分配内存前强行进行越界截断检查，配置最大允许字节数为 **1024 字节**：
     ```c
     if (ws_pkt.len > 1024) {
         ESP_LOGE("WS", "Received WS frame size %d exceeds limit of 1024 bytes!", (int)ws_pkt.len);
@@ -83,14 +83,32 @@
 *   串口输入的字符传入 `handle_input_char(ctx, &uart_sh, c)`；而从 WebSocket 队列 (`input_queue`) 消费的字符传入 `handle_input_char(ctx, &ws_sh, c)`。两端拥有各自的命令编辑缓冲区，互不串扰。
 
 ### 4. DEFECT-04 修复：前端视觉与交互功能全面重构
-*   **控制面板**：在 [console.html](file:///home/chenming/BareTcl/ESP32_ports/console.html) 头部区域新增了一个 HTML Grid 布局的“Hardware Control Panel”，包含 4 路继电器的控制开关，并绑定了 `fetch('/change_relayX')` 接口。
+*   **控制面板**：在 [console.html](file:///home/chenming/BareTcl/ESP32_ports/console.html) 头部区域新增了一个 HTML Grid 布局的“Hardware Control Panel”，包含 4 个继电器的控制开关，并绑定了 `fetch('/change_relayX')` 接口。
 *   **状态倒计时**：点击控制按钮后，前端展示发光脉冲边框，并开启 10 秒倒计时自动物理上锁特效，防止硬件继电器被高频误点导致电涌。
 *   **网络状态与断线恢复**：取消了在 xterm.js 写入重连字符的粗暴做法。改为通过右上角的 “Status Badge” 状态徽标红绿脉冲闪烁来安静表现断连和重试。
 *   **辅助按键**：在终端框下方配置了一组常用的终端修饰按键（Tab, Ctrl+C, Up, Down, Clear），极大地方便了移动端触屏操控。
 
 ---
 
-## 四、 程序结构与设计细节 (Program Structure & Design Details)
+## 四、 后续体验与功能微调 (Post-Verification Refinements)
+
+针对首版烧录运行过程中发现的细微体验问题，项目进行了如下微调和二次迭代：
+
+### 1. 解决 xterm.js 终端换行“阶梯效应” (convertEol 修复)
+*   **现象**：由于底层 Tcl 代码中部分输出字符串仅含有换行符 `\n`，而没有包含回车符 `\r`。xterm.js 在接收到 `\n` 时仅纵向移至下一行，而保持水平列数不变，导致控制台信息向下排布如阶梯般错落。
+*   **修复**：在 [console.html](file:///home/chenming/BareTcl/ESP32_ports/console.html) 初始化 `Terminal` 对象的构造参数中，启用了 `convertEol: true`。这强行将网络接收到的所有独占 `\n` 自动转换为了 `\r\n`。测试表明，终端输出换行和回车已完全恢复正常。
+
+### 2. 继电器“自锁开关”变更为“自锁翻转开关 (Toggle)”
+*   **逻辑变更为**：**点一次开启 (ON) 延时自锁计时，再点一次立即关闭 (OFF)**。
+*   **C 底层修改**：在 `relay_change_handler` 中，通过调用 `gpio_get_level` 静态读取目标引脚的当前输出状态，并将其逻辑翻转。如果翻转后电平为 0（代表低电平触发开启），则启动 10 秒安全倒计时并设置 `relayOn = true`；如果翻转后电平为 1（代表关闭），则停止计时。最后向前端返回当前的新电平状态字符串（`"0"` 或 `"1"`）。
+*   **前端网页修改**：重构了 `triggerRelay(channel)`。利用返回的状态码：
+    *   收到 `"0"`（已开启）：运行 `startRelayCountdown` 启动 10s 倒计时视觉特效。
+    *   收到 `"1"`（已关闭）：立即清除前台 `setInterval` 计时器，将按钮的 `active` 高亮样式移除，并复位标签文本。
+*   **安全性表现**：这实现了完全符合物理智能开关操作逻辑的状态机，且若用户不手动关闭，10秒后系统底层的硬件安全定时器依然会强制将其关断，确保设备绝对物理安全。
+
+---
+
+## 五、 程序结构与设计细节 (Program Structure & Design Details)
 
 本项目在 ESP32 上实现网络 Web 终端与控制台双向接入，核心架构包含**前端 UI 层**、**Web Server 传输层**以及**Tcl 解释器执行层**。
 
@@ -151,13 +169,13 @@
 
 ---
 
-## 五、 主要攻坚难点 (Key Technical Challenges)
+## 六、 主要攻坚难点 (Key Technical Challenges)
 
 在本次开发中，面临了以下三个方面的技术攻坚：
 
 1.  **多线程安全与生命周期同步（TCP 线程 vs Tcl 任务）**：
     *   *挑战*：HTTPD 协议栈运行在单独的系统任务中，而 Tcl 命令行编辑器运行在 `tcl_task` 任务中。如果当 `tcl_task` 正在高频调用 `httpd_ws_send_frame_async` 异步发送数据时，客户端突然拔掉网线，HTTP 任务会释放 FD 甚至将新连接分配给该 FD。
-    *   *攻坚*：设计了 `ws_mutex` 互斥信号量。在握手建立、释放上下文和异步发送数据的三方边界上全部强制加锁保护，并实行了“锁内双重指针防空校验”，完美杜绝了多线程内核态 Panic 和 FD 复用串扰漏洞。
+    *   *攻坚*：设计了 `ws_mutex` 互斥信号量。在限制建立、释放上下文和异步发送数据的三方边界上全部强制加锁保护，并实行了“锁内双重指针防空校验”，完美杜绝了多线程内核态 Panic 和 FD 复用串扰漏洞。
 2.  **大包防御下的内存极限防爆（SRAM 防护）**：
     *   *挑战*：ESP32 的可用 SRAM 空间极为紧绷（~100KB）。默认的 `httpd_ws_recv_frame` 在面对畸形大包或伪造头部包时，如果不加过滤直接通过 `calloc` 分配空间，会立即饿死系统堆内存导致 WiFi 断连甚至无限死机。
     *   *攻坚*：添加了帧长超限前置检查，对于大于 1024 字节的网络文本帧直接拦截并返回 `ESP_ERR_INVALID_SIZE`，迫使 TCP 层强制断开，保护了系统堆栈内存。
@@ -167,7 +185,7 @@
 
 ---
 
-## 六、 心路历程与开发反思 (Mindset & Reflection)
+## 七、 心路历程与开发反思 (Mindset & Reflection)
 
 *   **从简陋走向工业级安全**：
     起初，我们在第一版实现中仅仅注重了功能的“跑通”——即将 WebSocket 与 xterm.js 拼接起来。但在引入了 **FACT** 对抗机制后，从杠精的攻击角度出发，我们深刻意识到在资源极度受限且多任务并发的 MCU (微控制器) 环境中，“跑通”与“在复杂物理网络中稳定运行”之间有着巨大的安全鸿沟。
@@ -178,7 +196,7 @@
 
 ---
 
-## 七、 最终审计与裁决结论 (Tribunal & Closure)
+## 八、 最终审计与裁决结论 (Tribunal & Closure)
 
 *   **最终裁决**：
     *   所有 **Critical** 和 **High** 严重缺陷清零，退出收敛条件完全达成。
