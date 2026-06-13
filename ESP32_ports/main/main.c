@@ -19,6 +19,17 @@
 #include <termios.h>
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "ping/ping_sock.h"
+#include <netdb.h>
+#include <sys/socket.h>
+
+// Ping 结果统计结构体
+typedef struct {
+    SemaphoreHandle_t sem;
+    volatile int success_cnt;
+    volatile int total_cnt;
+    volatile int last_rtt;
+} ping_result_t;
 
 // -------------------------------------------------------------
 // BareTcl 引擎整合定义与钩子
@@ -47,6 +58,8 @@ tcl_i32 tcl_cmd_digital_write(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_v
 tcl_i32 tcl_cmd_digital_read(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_ipconfig(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 
 // -------------------------------------------------------------
 // 物理内存池（Arena）布局定义
@@ -162,6 +175,152 @@ tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_
     return TCL_OK;
 }
 
+// Ping 成功接收 Echo 响应回调
+static void ping_on_success(esp_ping_handle_t hdl, void *args) {
+    ping_result_t *res = (ping_result_t *)args;
+    uint32_t elapsed_time, recv_len;
+    ip_addr_t target_addr;
+    esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_time, sizeof(elapsed_time));
+    esp_ping_get_profile(hdl, ESP_PING_PROF_SIZE, &recv_len, sizeof(recv_len));
+    esp_ping_get_profile(hdl, ESP_PING_PROF_IPADDR, &target_addr, sizeof(target_addr));
+    res->success_cnt++;
+    res->last_rtt = elapsed_time;
+    printf("%ld bytes from " IPSTR ": icmp_seq=%d time=%ld ms\n", 
+           (long)recv_len, IP2STR(&target_addr.u_addr.ip4), res->total_cnt, (long)elapsed_time);
+    fflush(stdout);
+    res->total_cnt++;
+}
+
+// Ping 超时未响应回调
+static void ping_on_timeout(esp_ping_handle_t hdl, void *args) {
+    ping_result_t *res = (ping_result_t *)args;
+    ip_addr_t target_addr;
+    esp_ping_get_profile(hdl, ESP_PING_PROF_IPADDR, &target_addr, sizeof(target_addr));
+    printf("From " IPSTR " icmp_seq=%d timeout\n", IP2STR(&target_addr.u_addr.ip4), res->total_cnt);
+    fflush(stdout);
+    res->total_cnt++;
+}
+
+// Ping 会话结束回调（释放信号量激活等待任务）
+static void ping_on_end(esp_ping_handle_t hdl, void *args) {
+    ping_result_t *res = (ping_result_t *)args;
+    xSemaphoreGive(res->sem);
+}
+
+// Tcl 指令: ipconfig
+// 获取当前开发板的 Wi-Fi 连接状态，如果已连接则输出 SSID、RSSI、IP 地址、子网掩码和网关。
+tcl_i32 tcl_cmd_ipconfig(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    char buf[256];
+    wifi_ap_record_t ap_info;
+    esp_netif_ip_info_t ip_info;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    
+    // 使用正确的 esp_wifi_sta_get_ap_info
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK && netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+        snprintf(buf, sizeof(buf), 
+                 "Status: Connected\n"
+                 "SSID: %s\n"
+                 "RSSI: %d dBm\n"
+                 "IP Address: " IPSTR "\n"
+                 "Netmask: " IPSTR "\n"
+                 "Gateway: " IPSTR,
+                 ap_info.ssid, ap_info.rssi,
+                 IP2STR(&ip_info.ip),
+                 IP2STR(&ip_info.netmask),
+                 IP2STR(&ip_info.gw));
+    } else {
+        snprintf(buf, sizeof(buf), "Status: Disconnected");
+    }
+    
+    tcl_u32 len = strlen(buf) + 1;
+    tcl_u32 res_offset = tcl_alc_p(context, len);
+    if (res_offset != TCL_NULL) {
+        char *ptr = (char *)TO_PTR(context, res_offset);
+        if (ptr) {
+            strcpy(ptr, buf);
+        }
+        context->result = res_offset;
+    }
+    return TCL_OK;
+}
+
+// Tcl 指令: ping <host>
+// 向指定的主机或 IP 发送 ICMP Echo 请求以测试网络连通性。
+tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (arg_count < 2) return TCL_ERROR;
+    const char *host = (const char *)TO_PTR(context, arg_values[1]);
+    
+    // 解析域名或 IP 地址
+    struct addrinfo hints;
+    struct addrinfo *res_addr;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_RAW;
+    
+    int err = getaddrinfo(host, NULL, &hints, &res_addr);
+    if (err != 0 || res_addr == NULL) {
+        tcl_u32 res_offset = tcl_alc_p(context, 64);
+        if (res_offset != TCL_NULL) {
+            char *ptr = (char *)TO_PTR(context, res_offset);
+            if (ptr) {
+                snprintf(ptr, 64, "Ping: unknown host %s", host);
+            }
+            context->result = res_offset;
+        }
+        return TCL_OK;
+    }
+    
+    struct sockaddr_in *saddr = (struct sockaddr_in *)res_addr->ai_addr;
+    ip_addr_t target_addr;
+    target_addr.u_addr.ip4.addr = saddr->sin_addr.s_addr;
+    target_addr.type = IPADDR_TYPE_V4;
+    freeaddrinfo(res_addr);
+    
+    printf("PING %s (" IPSTR ")\n", host, IP2STR(&target_addr.u_addr.ip4));
+    fflush(stdout);
+
+    esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
+    ping_config.target_addr = target_addr;
+    ping_config.count = 4; // 默认 ping 4 次
+
+    ping_result_t result;
+    result.sem = xSemaphoreCreateBinary();
+    result.success_cnt = 0;
+    result.total_cnt = 0;
+    result.last_rtt = 0;
+
+    esp_ping_callbacks_t cbs = {
+        .on_ping_success = ping_on_success,
+        .on_ping_timeout = ping_on_timeout,
+        .on_ping_end = ping_on_end,
+        .cb_args = &result
+    };
+
+    esp_ping_handle_t ping_handle;
+    if (esp_ping_new_session(&ping_config, &cbs, &ping_handle) == ESP_OK) {
+        esp_ping_start(ping_handle);
+        xSemaphoreTake(result.sem, portMAX_DELAY); // 挂起 Tcl 任务直到 Ping 结束
+        esp_ping_delete_session(ping_handle);
+    }
+    vSemaphoreDelete(result.sem);
+    
+    // 将 ping 结果统计信息输出给 Tcl result 寄存器
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Packets: Sent = %d, Received = %d, Lost = %d", 
+             result.total_cnt, result.success_cnt, result.total_cnt - result.success_cnt);
+    
+    tcl_u32 len = strlen(buf) + 1;
+    tcl_u32 res_offset = tcl_alc_p(context, len);
+    if (res_offset != TCL_NULL) {
+        char *ptr = (char *)TO_PTR(context, res_offset);
+        if (ptr) {
+            strcpy(ptr, buf);
+        }
+        context->result = res_offset;
+    }
+    return TCL_OK;
+}
+
 // Tcl 指令: log <on|off>
 // 动态开启或关闭 ESP-IDF 底层 Wi-Fi 协议栈和系统内核的高频调试日志，以防止干扰 Tcl 控制台输入。
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
@@ -229,6 +388,8 @@ void tcl_task(void *pvParameters) {
     tcl_register_c_cmd((const tcl_u8 *)"digital_read", tcl_cmd_digital_read);
     tcl_register_c_cmd((const tcl_u8 *)"tcl_shell_ansi", tcl_cmd_tcl_shell_ansi);
     tcl_register_c_cmd((const tcl_u8 *)"log", tcl_cmd_log);
+    tcl_register_c_cmd((const tcl_u8 *)"ipconfig", tcl_cmd_ipconfig);
+    tcl_register_c_cmd((const tcl_u8 *)"ping", tcl_cmd_ping);
 
     // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
     // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）
@@ -419,8 +580,8 @@ void wifi_init_sta(void) {
     // 静态配置目标 Wi-Fi 路由的 SSID 与密钥
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = "CMCC-SUbF",
-            .password = "kuuf7747",
+            .ssid = "testzzzz",
+            .password = "11111111",
         },
     };
     esp_wifi_set_mode(WIFI_MODE_STA);

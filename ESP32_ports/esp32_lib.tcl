@@ -28,7 +28,7 @@ proc queens {} {
 
 proc help {} {
     puts "\n================================================="
-    puts "      BareTcl ESP32 Help System (Version: 8)"
+    puts "      BareTcl ESP32 Help System (Version: 10)"
     puts "================================================="
     puts "Hardware Control Commands:"
     puts "  gpio_mode <pin> <mode>       : Set GPIO mode (0=INPUT, 1=OUTPUT, 2=INPUT_PULLUP)"
@@ -38,6 +38,8 @@ proc help {} {
     puts "System Commands:"
     puts "  log <on|off>                 : Toggle Wi-Fi and system logs on/off"
     puts "  tcl_shell_ansi <0|1>         : Toggle ANSI terminal coloring on/off"
+    puts "  ipconfig                     : Show Wi-Fi connection status and IP info"
+    puts "  ping <host_or_ip>            : Send ICMP Echo requests to network host"
     puts "  exit                         : Reboot the ESP32 chip"
     puts ""
     puts "Applications:"
