@@ -282,6 +282,7 @@ tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
     ping_config.target_addr = target_addr;
     ping_config.count = 4; // 默认 ping 4 次
+    ping_config.task_stack_size = 4096; // 增加栈空间防止在回调中调用 printf 引起栈溢出 (Stack protection fault)
 
     ping_result_t result;
     result.sem = xSemaphoreCreateBinary();
