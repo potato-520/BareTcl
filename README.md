@@ -47,7 +47,7 @@ BareTcl 坚持零依赖。为了实现真正的裸机运行，我们自主实现
 - **GC 极限压力**：在仅 64KB 的 Arena 空间内承受了数万次变量 churn 测试，零泄露，零碎片。
 - **ESP32 芯片级原生移植**：在 ESP32-C3 (ESP-IDF 架构) 上实现原生 C 全功能移植（参见 [ESP32_ports](file:///home/chenming/BareTcl/ESP32_ports)）。包含非阻塞串口 REPL、VFS 无缓冲实时输入、软硬件看门狗安全让出（`TCL_YIELD_HOOK`）以及物理 GPIO (继电器/按键) 的 C 扩展绑定。详情参见 [ESP32 移植设计与踩坑笔记](./docs/ESP32移植.md)。
 
-  ![](./docs/ESP32成功运行BareTcl.mp4)
+  [![演示视频：ESP32 成功运行 BareTcl](./docs/video_thumbnail.jpg)](./docs/ESP32成功运行BareTcl.mp4)
 
 ---
 
