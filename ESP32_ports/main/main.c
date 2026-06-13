@@ -21,8 +21,12 @@
 #include "driver/usb_serial_jtag_vfs.h"
 
 // -------------------------------------------------------------
-// BareTcl Integration Definitions
+// BareTcl 引擎整合定义与钩子
 // -------------------------------------------------------------
+// TCL_YIELD_HOOK: 状态机执行周期中调用的看门狗让出钩子。
+// 设定每 2000 次 Tcl 状态机迭代（以防长耗时/无限循环脚本独占 CPU），
+// 强制调用 vTaskDelay(1) 挂起当前任务 1 个 Tick 周期，
+// 从而让出 CPU 给低优先级的 IDLE 任务去喂看门狗（TWDT），彻底解决 WDT 饥饿复位警告。
 #define TCL_YIELD_HOOK() do { \
     static uint32_t __yield_cnt = 0; \
     if (++__yield_cnt >= 2000) { \
@@ -31,50 +35,58 @@
     } \
 } while(0)
 
-#include "../../src/tcl_core.c"
-#include "../../src/extcmd.c"
-#include "../../src/baretcl_shell.c"
-#include "esp32_lib.c"
+// 引入 BareTcl 核心源码与扩展模块
+#include "../../src/tcl_core.c"       // Tcl 核心解释器与内存管理核心
+#include "../../src/extcmd.c"         // Tcl 核心扩展命令实现
+#include "../../src/baretcl_shell.c"  // Tcl 交互式命令行行编辑器实现
+#include "esp32_lib.c"                // 由 esp32_lib.tcl 自动编译转换而成的 ESP32 自定义库字节数组
 
-// Forward declaration of C command handlers
+// GPIO 控制 Tcl 扩展命令函数的 C 前置声明
 tcl_i32 tcl_cmd_gpio_mode(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_digital_write(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_digital_read(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 
-
-// Memory Arena Physical Layout
+// -------------------------------------------------------------
+// 物理内存池（Arena）布局定义
+// -------------------------------------------------------------
+// 定义 Tcl 运行时所需的静态物理内存池，大小为 48KB。
+// BareTcl 所有对象的分配与垃圾回收（GC）均限制在此空间内，零外部 malloc/free。
 #define TCL_ARENA_SIZE (48 * 1024)
 static char tcl_arena[TCL_ARENA_SIZE];
 
-// HAL Put String redirection
+// Tcl 硬件抽象层输出重定向函数
+// 当 BareTcl 需要向控制台打印输出（如 puts）时，底层直接调用此 C 接口。
 void tcl_hal_puts(const tcl_u8 *s) {
-    printf("%s", (const char *)s);
-    fflush(stdout);
+    printf("%s", (const char *)s); // 重定向到标准输出
+    fflush(stdout);                // 强制刷空 stdout 缓冲区确保即时输出
 }
 
 // -------------------------------------------------------------
-// Hardware & Thread Safety State
+// 硬件接口引脚映射与多任务共享状态
 // -------------------------------------------------------------
-static SemaphoreHandle_t relayMutex = NULL;
-volatile bool tcl_task_running = false;
-volatile int tcl_task_create_res = -99;
-volatile bool enable_log_print = false;
-volatile bool log_explicitly_set = false;
+static SemaphoreHandle_t relayMutex = NULL; // 互斥锁，用于跨任务互斥安全地访问继电器状态
+volatile bool tcl_task_running = false;     // Tcl 任务正在运行的标志位
+volatile int tcl_task_create_res = -99;     // Tcl 任务创建的返回值记录
+volatile bool enable_log_print = false;     // 指示是否开启详细的调试日志打印
+volatile bool log_explicitly_set = false;   // 标记用户是否显式指定了 log 的开关状态
 
-
+// 硬件板卡引脚定义：4路输入按键引脚、4路低电平触发继电器输出引脚
 const gpio_num_t buttonPins[4] = {GPIO_NUM_10, GPIO_NUM_9, GPIO_NUM_6, GPIO_NUM_8};
 const gpio_num_t relayPins[4] = {GPIO_NUM_3, GPIO_NUM_4, GPIO_NUM_5, GPIO_NUM_7};
 
-static uint64_t relayOnMillis[4] = {0};
-static volatile bool relayOn[4] = {false};
+static uint64_t relayOnMillis[4] = {0}; // 记录每个继电器最近一次被开启（拉低电平）的时间戳（毫秒）
+static volatile bool relayOn[4] = {false}; // 标记每个继电器当前是否处于激活（开启）状态
 
 // -------------------------------------------------------------
-// GPIO Tcl Extension Commands
+// Tcl 硬件扩展命令接口实现（供 Tcl 脚本直接调用控制 GPIO）
 // -------------------------------------------------------------
+
+// Tcl 指令: gpio_mode <pin> <mode>
+// 设置 GPIO 的物理模式。mode 参数: 0=输入模式, 1=输出模式, 2=带上拉输入模式。
 tcl_i32 tcl_cmd_gpio_mode(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
-    if (arg_count < 3) return TCL_ERROR;
+    if (arg_count < 3) return TCL_ERROR; // 参数检查
     int pin = atoi((const char *)TO_PTR(context, arg_values[1]));
     int mode = atoi((const char *)TO_PTR(context, arg_values[2]));
     
@@ -94,21 +106,25 @@ tcl_i32 tcl_cmd_gpio_mode(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_value
     } else {
         return TCL_ERROR;
     }
-    gpio_config(&io_conf);
+    gpio_config(&io_conf); // 配置 GPIO 寄存器
     return TCL_OK;
 }
 
+// Tcl 指令: digital_write <pin> <level>
+// 输出指定 GPIO 引脚的物理电平。level 参数: 0=低电平, 1=高电平。
+// 当对继电器所映射的引脚写入 0（低电平有效激活）时，自动更新激活定时器用于延时自锁。
 tcl_i32 tcl_cmd_digital_write(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     if (arg_count < 3) return TCL_ERROR;
     int pin = atoi((const char *)TO_PTR(context, arg_values[1]));
     int val = atoi((const char *)TO_PTR(context, arg_values[2]));
     
-    gpio_set_level(pin, val);
+    gpio_set_level(pin, val); // 写入硬件物理电平
     
+    // 如果修改了继电器引脚，在互斥锁保护下同步更新它的激活状态与开启毫秒时间戳
     if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
         for (int i = 0; i < 4; i++) {
             if (relayPins[i] == pin) {
-                if (val == 0) { // Low triggers relay
+                if (val == 0) { // 低电平代表开启继电器
                     relayOn[i] = true;
                     relayOnMillis[i] = esp_timer_get_time() / 1000;
                 } else {
@@ -121,11 +137,14 @@ tcl_i32 tcl_cmd_digital_write(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_v
     return TCL_OK;
 }
 
+// Tcl 指令: digital_read <pin>
+// 读取指定 GPIO 引脚的物理输入电平值，返回 0 或 1 并赋予 Tcl 解释器的 result 寄存器。
 tcl_i32 tcl_cmd_digital_read(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     if (arg_count < 2) return TCL_ERROR;
     int pin = atoi((const char *)TO_PTR(context, arg_values[1]));
-    int val = gpio_get_level(pin);
+    int val = gpio_get_level(pin); // 读取硬件引脚物理输入
     
+    // 在静态 Arena 中分配 12 字节存储结果字符串，并写入解释器 result 寄存器返回给 Tcl 空间
     tcl_u32 res_offset = tcl_alc_p(context, 12);
     if (res_offset != TCL_NULL) {
         itoa(val, (char *)TO_PTR(context, res_offset), 10);
@@ -134,6 +153,8 @@ tcl_i32 tcl_cmd_digital_read(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_va
     return TCL_OK;
 }
 
+// Tcl 指令: tcl_shell_ansi <0|1>
+// 动态切换交互式控制台的 ANSI 转义着色支持（0 为关闭，1 为开启复位/擦除/提示符高亮）。
 tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     if (arg_count < 2) return TCL_ERROR;
     int val = atoi((const char *)TO_PTR(context, arg_values[1]));
@@ -141,8 +162,11 @@ tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_
     return TCL_OK;
 }
 
+// Tcl 指令: log <on|off>
+// 动态开启或关闭 ESP-IDF 底层 Wi-Fi 协议栈和系统内核的高频调试日志，以防止干扰 Tcl 控制台输入。
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     if (arg_count < 2) {
+        // 如果没有携带参数，则返回当前 log 开关的 Tcl 状态值 ("on" 或 "off")
         tcl_u32 res_offset = tcl_alc_p(context, 16);
         if (res_offset != TCL_NULL) {
             char *dest = (char *)TO_PTR(context, res_offset);
@@ -179,39 +203,47 @@ tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
 }
 
 // -------------------------------------------------------------
-// FreeRTOS Tcl Task
+// FreeRTOS Tcl 独立运行任务 (tcl_task)
 // -------------------------------------------------------------
 void tcl_task(void *pvParameters) {
     tcl_task_running = true;
 
-    // Disable stdin/stdout buffering for this task's reent structure in FreeRTOS
+    // 禁用当前 FreeRTOS 任务独占重入结构体（Reent）下的 stdin 和 stdout 流缓冲区。
+    // 这是实现字符级非阻塞实时输入、即时回显的基础。
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
 
     printf("[DIAG] tcl_task started!\n");
     fflush(stdout);
 
+    // 获取内存 Arena 物理指针并执行 BareTcl 初始化
     TclCtx *ctx = (TclCtx *)tcl_arena;
     tcl_init(tcl_arena, TCL_ARENA_SIZE);
     
+    // 注册核心通用库扩展 C 函数
     tcl_register_ext_cmds(ctx);
+    
+    // 注册 GPIO 控制与端口定制 of C 指令到 Tcl 命名空间中
     tcl_register_c_cmd((const tcl_u8 *)"gpio_mode", tcl_cmd_gpio_mode);
     tcl_register_c_cmd((const tcl_u8 *)"digital_write", tcl_cmd_digital_write);
     tcl_register_c_cmd((const tcl_u8 *)"digital_read", tcl_cmd_digital_read);
     tcl_register_c_cmd((const tcl_u8 *)"tcl_shell_ansi", tcl_cmd_tcl_shell_ansi);
     tcl_register_c_cmd((const tcl_u8 *)"log", tcl_cmd_log);
 
-    // Load standard Tcl bootstrap library (defines 'for', 'foreach', 'incr', 'lappend', etc.)
+    // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
+    // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）
     if (tcl_load_bootstrap(ctx) != TCL_OK) {
         printf("[ERROR] Failed to load standard bootstrap library: %s\n", (const char *)tcl_get_result(ctx));
     }
 
-    // Evaluate the compiled Tcl bootstrap script (defines help, etc.)
+    // 2. 核心关键步：评估执行端口特有的扩展自举 Tcl 脚本 (esp32_lib.tcl -> esp32_lib.c)
+    // 注册包括 help, queens 在内的嵌入式特色应用与帮助菜单
     tcl_eval(ctx, (const tcl_u8 *)esp32_bootstrap);
 
+    // 初始化交互式控制台 Shell 结构体
     static TclShell tcl_sh;
     shell_init(&tcl_sh);
-    baretcl_use_ansi = 1; // Default on since putty/idf_monitor supports ANSI
+    baretcl_use_ansi = 1; // 默认开启 ANSI 终端控制（支持 Putty、Miniterm 等的高级行编辑功能）
 
     printf("\r\n==============================================\r\n");
     printf("BareTcl Shell for ESP32 (ESP-IDF Native C)\r\n");
@@ -220,7 +252,8 @@ void tcl_task(void *pvParameters) {
     printf("Standard monitor: ANSI enabled. Run 'tcl_shell_ansi 0' to disable ANSI.\r\n\x1b[0m> ");
     fflush(stdout);
 
-    // Set stdin to non-blocking mode and print diagnostics
+    // 将 stdin 输入流底层的物理描述符配置为非阻塞模式（O_NONBLOCK）
+    // 使得 fgetc(stdin) 能够不挂起地瞬间读入并处理当前缓冲区内所有的串口字节数据
     int fd = fileno(stdin);
     int fcntl_res = fcntl(fd, F_SETFL, O_NONBLOCK);
     printf("[DIAG] stdin fd: %d, fcntl set non-block result: %d\n", fd, fcntl_res);
@@ -228,9 +261,12 @@ void tcl_task(void *pvParameters) {
 
     uint64_t last_diag_print = esp_timer_get_time() / 1000;
 
+    // Tcl 任务主事件循环
     while (true) {
         int r;
         bool progress = false;
+        
+        // 循环拉取当前非阻塞串口输入缓冲区中已到达的所有字符
         while ((r = fgetc(stdin)) != EOF) {
             progress = true;
             uint8_t c = (uint8_t)r;
@@ -238,27 +274,32 @@ void tcl_task(void *pvParameters) {
                 printf("[DIAG] Read char: 0x%02X (%c)\n", c, (c >= 32 && c < 127) ? c : ' ');
                 fflush(stdout);
             }
+            
+            // 将字符驱送交互式 Shell 行编辑器状态机进行评估，检测是否按下了回车键且花括号已全部对齐闭合
             if (shell_handle_char(&tcl_sh, c, "> ") == 1) {
+                // 当检测到完整的一行命令或多行复合脚本输入完毕，调用 Tcl 状态机解释引擎对其进行物理求值
                 int status = tcl_eval(ctx, tcl_sh.line);
                 
                 if (status == TCL_EXIT) {
                     printf("BareTcl exit command triggered. System rebooting...\r\n");
                     vTaskDelay(pdMS_TO_TICKS(500));
-                    esp_restart();
+                    esp_restart(); // 执行芯片软件复位重启
                 } else if (status == TCL_ERROR) {
-                    printf("Error: %s\r\n", tcl_get_result(ctx));
+                    printf("Error: %s\r\n", tcl_get_result(ctx)); // 打印脚本层未捕获的报错结果
                 } else {
                     const tcl_u8 *res = tcl_get_result(ctx);
                     if (res && res[0]) {
-                        printf("%s\r\n", res);
+                        printf("%s\r\n", res); // 打印正常求值的脚本输出结果
                     }
                 }
                 fflush(stdout);
 
-                // Clear line buffer
+                // 完全擦除清除当前行缓冲区，为接收下一条 Tcl 命令做冷启动重置
                 memset(tcl_sh.line, 0, SHELL_MAX_LINE);
                 tcl_sh.len = 0;
                 tcl_sh.cursor = 0;
+                
+                // 再次复位打印行提示符，并在 ANSI 模式下输出终端复位颜色序列以防止日志色彩污染
                 if (baretcl_use_ansi) {
                     printf("\x1b[0m> ");
                 } else {
@@ -275,6 +316,7 @@ void tcl_task(void *pvParameters) {
             fflush(stdout);
         }
 
+        // 串口输入空闲期间，强制让出 10ms 资源给同优先级或更高优先级任务运行
         if (!progress) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
@@ -282,13 +324,17 @@ void tcl_task(void *pvParameters) {
 }
 
 // -------------------------------------------------------------
-// WebServer HTTP Event Handlers
+// WebServer HTTP 静态请求路由与事件处理器
 // -------------------------------------------------------------
+
+// HTTP GET / 路由处理器：静态返回状态标识 "1" 证明网络与控制链路正常
 static esp_err_t root_get_handler(httpd_req_t *req) {
     httpd_resp_send(req, "1", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
+// HTTP GET /change_relay1 至 /change_relay4 路由处理器：
+// 网络触发开启指定的继电器通道（将 GPIO 拉低），并刷新开启时间戳用于 10 秒自动延时自锁关断。
 static esp_err_t relay_change_handler(httpd_req_t *req) {
     int index = -1;
     if (strstr(req->uri, "change_relay1")) index = 0;
@@ -297,7 +343,9 @@ static esp_err_t relay_change_handler(httpd_req_t *req) {
     else if (strstr(req->uri, "change_relay4")) index = 3;
 
     if (index >= 0 && index < 4) {
-        gpio_set_level(relayPins[index], 0); // Active low
+        gpio_set_level(relayPins[index], 0); // 继电器低电平触发开启
+        
+        // 加互斥锁更新计时器与激活标志位
         if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
             relayOnMillis[index] = esp_timer_get_time() / 1000;
             relayOn[index] = true;
@@ -310,15 +358,18 @@ static esp_err_t relay_change_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+// Web Server 初始化启动与路由注册接口
 httpd_handle_t start_webserver(void) {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = true;
+    config.lru_purge_enable = true; // 启用最近最少使用（LRU）清理，保持资源占用紧凑
 
     if (httpd_start(&server, &config) == ESP_OK) {
+        // 注册根路径根网页 API
         httpd_uri_t uri_root = { .uri = "/", .method = HTTP_GET, .handler = root_get_handler };
         httpd_register_uri_handler(server, &uri_root);
 
+        // 注册 4 路网络继电器控制路由
         httpd_uri_t uri_relay1 = { .uri = "/change_relay1", .method = HTTP_GET, .handler = relay_change_handler };
         httpd_register_uri_handler(server, &uri_relay1);
         httpd_uri_t uri_relay2 = { .uri = "/change_relay2", .method = HTTP_GET, .handler = relay_change_handler };
@@ -332,14 +383,14 @@ httpd_handle_t start_webserver(void) {
 }
 
 // -------------------------------------------------------------
-// Wi-Fi Connection Management
+// Wi-Fi 事件回调与网络连接管理
 // -------------------------------------------------------------
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        esp_wifi_connect(); // Wi-Fi 启动后自动建立 AP 连接
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        esp_wifi_connect();
+        esp_wifi_connect(); // 断开后自动重试 AP 连接
         if (enable_log_print) {
             ESP_LOGI("WIFI", "Retrying AP connection...");
         }
@@ -351,6 +402,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+// Wi-Fi 客户端模式 (STA) 冷启动初始化配置
 void wifi_init_sta(void) {
     esp_netif_init();
     esp_event_loop_create_default();
@@ -364,6 +416,7 @@ void wifi_init_sta(void) {
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, &instance_any_id);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, &instance_got_ip);
 
+    // 静态配置目标 Wi-Fi 路由的 SSID 与密钥
     wifi_config_t wifi_config = {
         .sta = {
             .ssid = "CMCC-SUbF",
@@ -372,14 +425,14 @@ void wifi_init_sta(void) {
     };
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
-    esp_wifi_start();
+    esp_wifi_start(); // 激活 Wi-Fi 硬件
 }
 
 // -------------------------------------------------------------
-// Hardware Initialization
+// 板载硬件 GPIO 引脚及状态配置
 // -------------------------------------------------------------
 void init_gpio(void) {
-    // Config buttons (Input, Pull-Up)
+    // 1. 配置 4 路按键输入引脚：输入模式，物理使能内部弱上拉，防止电平漂移
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_INPUT,
@@ -389,19 +442,23 @@ void init_gpio(void) {
     };
     gpio_config(&io_conf);
 
-    // Config relays (Output)
+    // 2. 配置 4 路继电器输出引脚：输出模式
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pin_bit_mask = (1ULL << GPIO_NUM_3) | (1ULL << GPIO_NUM_4) | (1ULL << GPIO_NUM_5) | (1ULL << GPIO_NUM_7);
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     gpio_config(&io_conf);
 
-    // Turn off all relays initially (High)
+    // 3. 硬件上电初始化状态：将所有低电平有效的继电器输出引脚置高（初始断开关断状态）
+    // 之间加入 100ms 延迟防止继电器瞬间同时动作引发系统电涌或供电跌落重启
     for (int i = 0; i < 4; i++) {
         gpio_set_level(relayPins[i], 1);
-        vTaskDelay(pdMS_TO_TICKS(100)); // Sequential delay to reduce current spikes
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
+// -------------------------------------------------------------
+// 物理 UART0 串口输入输出驱动初始化
+// -------------------------------------------------------------
 void init_uart(void) {
     uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -411,31 +468,34 @@ void init_uart(void) {
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    // Install UART driver on UART0 for reading console input
+    // 在物理 UART0 口上安装串口驱动（缓冲区大小配置为 2048 字节）
     uart_driver_install(UART_NUM_0, 2048, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_0, &uart_config);
-    // Bind VFS to the UART driver
+    // 关键步：绑定 VFS 虚拟文件系统接口至当前 UART 驱动以使用标准 C 输入输出
     uart_vfs_dev_use_driver(UART_NUM_0);
 }
 
+// -------------------------------------------------------------
+// ESP32 Native USB-Serial-JTAG 控制台虚拟文件系统绑定
+// -------------------------------------------------------------
 void init_usb_serial_jtag(void) {
     usb_serial_jtag_driver_config_t usb_serial_jtag_config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    // Install driver with default configuration (internal FIFO buffers size 512 by default)
+    // 安装 USB-Serial-JTAG 驱动，利用芯片内部 FIFO 进行数据收发
     usb_serial_jtag_driver_install(&usb_serial_jtag_config);
-    // Tell VFS to use the installed driver for console
+    // 关键步：绑定 VFS 虚拟文件系统接口至当前驱动，使得芯片可通过原生 USB 直连线收发控制台输入
     usb_serial_jtag_vfs_use_driver();
 }
 
 // -------------------------------------------------------------
-// Main Application Entry
+// 整个 ESP32 应用程序的入口 (app_main)
 // -------------------------------------------------------------
 void app_main(void) {
-    // Disable all verbose/info logs immediately upon startup
+    // 启动之初，立刻屏蔽除警告和错误之外的高频日志输出，防止系统背景日志破坏 Tcl Shell 控制台的可读性
     esp_log_level_set("wifi", ESP_LOG_NONE);
     esp_log_level_set("WIFI", ESP_LOG_NONE);
     esp_log_level_set("*", ESP_LOG_WARN);
 
-    // Initialize NVS for Wi-Fi storage
+    // 初始化非易失闪存（NVS），WiFi 协议栈在闪存内部建立网络校准数据存储时必须依赖此组件
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -443,16 +503,20 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // 初始化继电状态保护锁
     relayMutex = xSemaphoreCreateMutex();
+    
+    // 初始化板卡外设及通信接口
     init_gpio();
     init_uart();
     init_usb_serial_jtag();
 
-    // Disable stdin/stdout buffering for real-time character echo after VFS UART driver is registered
+    // 禁用主任务下的输入输出缓冲
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
 
-    // Disable canonical mode (ICANON) and echo (ECHO) on stdin to enable real-time raw input
+    // 彻底改写并擦除 stdin 标准输入的 ICANON 规范行处理及 ECHO 回显标志
+    // 从而使串口驱动直接将原生字符透明搬运至 `shell_handle_char` 进行实时光标移动、回退处理
     struct termios t;
     int getattr_res = tcgetattr(fileno(stdin), &t);
     printf("[DIAG] tcgetattr result: %d, errno: %d\n", getattr_res, getattr_res == 0 ? 0 : errno);
@@ -464,29 +528,30 @@ void app_main(void) {
         fflush(stdout);
     }
 
+    // 激活网络与服务
     wifi_init_sta();
     start_webserver();
 
-    // Start BareTcl Task
+    // 创建独立的 FreeRTOS 任务（tcl_task），分配 8KB 的栈空间，优先级设为 5
     tcl_task_create_res = xTaskCreate(tcl_task, "tcl_task", 8192, NULL, 5, NULL);
 
-    // Main Control Loop (Handles button polling & automatic relay shut-off)
+    // 芯片硬件轮询主循环（用于按键的消抖捕获、继电器的自动安全延时自锁关断）
     bool lastButtonState[4] = { 1, 1, 1, 1 };
     uint64_t previousMillis = esp_timer_get_time() / 1000;
     uint64_t lastPrintMillis = esp_timer_get_time() / 1000;
-    const uint64_t resetInterval = 1 * 60 * 60 * 1000; // 1 hour reboot
-    const uint64_t printInterval = 1000; // 1 second prints
-    const uint64_t relayOnDuration = 10000; // 10 second auto shut-off
+    const uint64_t resetInterval = 1 * 60 * 60 * 1000; // 每 1 小时自动重启以防系统在极极端环境下僵死
+    const uint64_t printInterval = 1000; // 日志打印频率为 1 秒
+    const uint64_t relayOnDuration = 10000; // 继电器开启 10 秒后自动断开，实现物理延时关断
 
     while (true) {
         uint64_t currentMillis = esp_timer_get_time() / 1000;
 
-        // Auto restart check
+        // 定期重启触发
         if (currentMillis - previousMillis >= resetInterval) {
             esp_restart();
         }
 
-        // Print runtime and task state
+        // 如果开启了日志，打印运行健康状况
         if (enable_log_print && (currentMillis - lastPrintMillis >= printInterval)) {
             lastPrintMillis = currentMillis;
             printf("Running time: %lld s, task_created: %d, task_running: %d\n", 
@@ -494,16 +559,16 @@ void app_main(void) {
             fflush(stdout);
         }
 
-        // Poll button presses
+        // 轮询 4 路板载实体按键（低电平有效）的按下状态
         for (int i = 0; i < 4; i++) {
             bool buttonState = gpio_get_level(buttonPins[i]);
-            if (buttonState == 0 && lastButtonState[i] == 1) { // Pressed (Active Low)
-                // Toggle relay state
+            if (buttonState == 0 && lastButtonState[i] == 1) { // 边缘跳变捕获：按键被按下
+                // 在互斥锁保护下翻转继电器的输出电平并启动自动关断计时
                 if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
                     int currentVal = gpio_get_level(relayPins[i]);
                     int nextVal = !currentVal;
                     gpio_set_level(relayPins[i], nextVal);
-                    if (nextVal == 0) {
+                    if (nextVal == 0) { // 继电器开启
                         relayOn[i] = true;
                         relayOnMillis[i] = esp_timer_get_time() / 1000;
                     } else {
@@ -514,7 +579,7 @@ void app_main(void) {
             }
             lastButtonState[i] = buttonState;
 
-            // Handle automatic relay turn-off timing
+            // 定时断开安全检测：如果继电器持续处于开启状态超过 10 秒，强制断开以确保物理安全
             bool shouldClose = false;
             if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
                 if (relayOn[i] && (currentMillis - relayOnMillis[i] >= relayOnDuration)) {
@@ -525,10 +590,10 @@ void app_main(void) {
             }
             
             if (shouldClose) {
-                gpio_set_level(relayPins[i], 1); // Turn off (High)
+                gpio_set_level(relayPins[i], 1); // 强制输出高电平，关闭继电器
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(10)); // 睡眠 10ms，防止该大循环占满 CPU
     }
 }
