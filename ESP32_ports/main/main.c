@@ -610,15 +610,26 @@ static esp_err_t relay_change_handler(httpd_req_t *req) {
     else if (strstr(req->uri, "change_relay4")) index = 3;
 
     if (index >= 0 && index < 4) {
-        gpio_set_level(relayPins[index], 0); // 继电器低电平触发开启
+        int next_val = 1; // 默认高电平（断开）
         
         // 加互斥锁更新计时器与激活标志位
         if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
-            relayOnMillis[index] = esp_timer_get_time() / 1000;
-            relayOn[index] = true;
+            int current_val = gpio_get_level(relayPins[index]);
+            next_val = !current_val; // 翻转电平
+            gpio_set_level(relayPins[index], next_val);
+            
+            if (next_val == 0) { // 继电器开启
+                relayOnMillis[index] = esp_timer_get_time() / 1000;
+                relayOn[index] = true;
+            } else { // 继电器手动关闭
+                relayOn[index] = false;
+            }
             xSemaphoreGive(relayMutex);
         }
-        httpd_resp_send(req, "0", HTTPD_RESP_USE_STRLEN);
+        
+        char res_buf[4];
+        snprintf(res_buf, sizeof(res_buf), "%d", next_val);
+        httpd_resp_send(req, res_buf, HTTPD_RESP_USE_STRLEN);
     } else {
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Relay not found");
     }

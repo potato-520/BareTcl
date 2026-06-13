@@ -296,6 +296,7 @@
         // Init xterm.js
         const term = new Terminal({
             cursorBlink: true,
+            convertEol: true,
             theme: {
                 background: '#10101a',
                 foreground: '#f1f1f9',
@@ -406,16 +407,23 @@
             const btn = document.getElementById(`relay-btn-${channel}`);
             const textEl = document.getElementById(`btn-text-${channel}`);
             
-            // If already active, don't trigger again
-            if (btn.classList.contains('active')) return;
-
             // Trigger HTTP endpoint
             fetch(`/change_relay${channel + 1}`)
-                .then(response => {
-                    if (response.ok) {
+                .then(response => response.text())
+                .then(state => {
+                    if (state === "0") {
+                        // Turned ON
                         startRelayCountdown(channel);
+                    } else if (state === "1") {
+                        // Turned OFF
+                        if (relayTimers[channel]) {
+                            clearInterval(relayTimers[channel]);
+                            relayTimers[channel] = null;
+                        }
+                        btn.classList.remove('active');
+                        textEl.innerHTML = `Relay Channel ${channel + 1}`;
                     } else {
-                        console.error('Failed to trigger relay');
+                        console.error('Failed to trigger relay, response state:', state);
                     }
                 })
                 .catch(err => {
