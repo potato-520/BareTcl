@@ -18,6 +18,7 @@ python3 ../tools/tcl2c.py ../src/tcllib.tcl ../src/tcllib.c
 
 echo "=== Generating ESP32 Tcl library ==="
 python3 tcl2c_esp32.py esp32_lib.tcl main/esp32_lib.c esp32_bootstrap
+python3 tcl2c_esp32.py console.html main/console_html.c console_html
 
 # 3. 执行编译
 echo "=== Starting ESP-IDF Build ==="
