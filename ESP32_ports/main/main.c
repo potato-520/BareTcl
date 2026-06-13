@@ -82,6 +82,7 @@ tcl_i32 tcl_cmd_tcl_shell_ansi(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_ipconfig(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
+tcl_i32 tcl_cmd_sleep(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values);
 
 // -------------------------------------------------------------
 // 物理内存池（Arena）布局定义
@@ -349,6 +350,17 @@ tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     return TCL_OK;
 }
 
+// Tcl 指令: sleep <ms>
+// 挂起当前 Tcl 运行任务指定毫秒数（利用 FreeRTOS 任务延时让出 CPU，不阻塞其他系统任务及主循环）
+tcl_i32 tcl_cmd_sleep(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
+    if (arg_count < 2) return TCL_ERROR;
+    int ms = atoi((const char *)TO_PTR(context, arg_values[1]));
+    if (ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    }
+    return TCL_OK;
+}
+
 // Tcl 指令: log <on|off>
 // 动态开启或关闭 ESP-IDF 底层 Wi-Fi 协议栈和系统内核的高频调试日志，以防止干扰 Tcl 控制台输入。
 tcl_i32 tcl_cmd_log(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
@@ -449,6 +461,7 @@ void tcl_task(void *pvParameters) {
     tcl_register_c_cmd((const tcl_u8 *)"log", tcl_cmd_log);
     tcl_register_c_cmd((const tcl_u8 *)"ipconfig", tcl_cmd_ipconfig);
     tcl_register_c_cmd((const tcl_u8 *)"ping", tcl_cmd_ping);
+    tcl_register_c_cmd((const tcl_u8 *)"sleep", tcl_cmd_sleep);
 
     // 1. 核心关键步：显式加载标准 Tcl 自举脚本库 (tcllib.tcl -> tcllib.c)
     // 注册高级通用 Tcl 指令（如 for, foreach, incr, lappend, lsearch 等）
