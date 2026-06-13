@@ -45,7 +45,7 @@ By integrating BareTcl, you can transform an ordinary serial port into a powerfu
 - **Self-Bootstrap Completeness**: The core instruction set is highly complete, and the standard library is built entirely by Tcl itself and statically integrated.
 - **8-Queens Solver**: Runs the 8-Queens algorithm perfectly in a bare-metal environment, proving its ability to handle deep recursion and complex lists.
 - **GC Extreme Pressure**: Withstood tens of thousands of variable churn tests in an Arena space of only 64KB, with zero leaks and zero fragmentation.
-- **Native ESP32 Chip Porting**: Fully functional native C porting on ESP32-C3 using ESP-IDF (see [ESP32_ports](file:///home/chenming/BareTcl/ESP32_ports)). Features a non-blocking serial REPL, VFS unbuffered real-time input, safe task yielding (`TCL_YIELD_HOOK`) to satisfy hardware/software watchdog timers, and C extension bindings for physical GPIOs (relays and buttons). For details, see [ESP32 Porting Design & Pitfalls](./ESP32移植.md).
+- **Native ESP32 Chip Porting**: Fully functional native C porting on ESP32-C3 using ESP-IDF (see [ESP32_ports](file:///home/chenming/BareTcl/ESP32_ports)). Features a non-blocking serial REPL, VFS unbuffered real-time input, safe task yielding (`TCL_YIELD_HOOK`) to satisfy hardware/software watchdog timers, and C extension bindings for physical GPIOs (relays and buttons). For details, see [ESP32 Porting Design & Pitfalls](./ESP32移植.md) ([Watch Demo Video](./ESP32成功运行BareTcl.mp4)).
 
 ---
 
