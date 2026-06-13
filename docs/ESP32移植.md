@@ -12,7 +12,7 @@
     *   **职责**：作为中央协调器，负责任务的最终方向控制。审查 Agent B 提交的移植代码设计；组织 Agent B 和 Agent C 针对设计缺陷和硬件风险进行对质辩论；依据证据链等级做出最终裁决；在设计审查和测试通过后，向用户交付成果。
 *   **Agent B: 牛马 (The Builder / `baretcl_builder` 独立子进程)**
     *   **职责**：负责静态代码分析、具体的移植方案拟定和代码编写。在本项目中，需要解决 BareTcl C 代码在 C++ (.ino) 环境中的编译兼容性、实现 ESP32 UART HAL 层输出、将 `shell_handle_char` 嵌入 Arduino 循环，并拟定 GPIO 控制的扩展指令集。
-*   **Agent C: 鲇鱼 (The Antagonist / `baretcl_antagonist` 独立子进程)**
+*   **Agent C: 杠精 (The Antagonist / `baretcl_antagonist` 独立子进程)**
     *   **职责**：负责寻找设计漏洞。重点攻击方向：ESP32 任务看门狗（WDT）在执行长时/死循环 Tcl 脚本时的触发复位风险、非阻塞 Web 服务器在 TclShell 执行时的阻塞饥饿问题、串口接收缓冲溢出、FreeRTOS 多任务下的线程安全，以及不支持 ANSI 转义序列的终端回显缺陷。
 *   **Agent D: 监理 (The Auditor / `baretcl_auditor` 独立子进程)**
     *   **职责**：负责合规性审计。监督三方讨论过程，确保每次断言和答辩都附带证据（L1-L5 等级），过滤非建设性的抬杠和无证据脑补，并输出独立的审计报告。
@@ -125,7 +125,7 @@ ESP32 (WROOM) 拥有约 520KB SRAM。去除 WiFi 协议栈、Web 服务器以及
 
 ## 3. 首轮质证与审计立案记录 (First-Round Adversarial & Audit Casings)
 
-本节记录了由子智能体 **Agent C (鲇鱼 - baretcl_antagonist)** 发起的首轮设计缺陷指控，以及 **Agent D (监理 - baretcl_auditor)** 依据有效质询准则和证据等级评估后作出的最终审计立案决定。
+本节记录了由子智能体 **Agent C (杠精 - baretcl_antagonist)** 发起的首轮设计缺陷指控，以及 **Agent D (监理 - baretcl_auditor)** 依据有效质询准则和证据等级评估后作出的最终审计立案决定。
 
 ### DEFECT-01: 单线程解析导致任务看门狗 (TWDT) 触发与喂狗方案失效
 *   **严重等级**：`Critical (严重)` —— 直接导致硬件反复重启。
@@ -170,7 +170,7 @@ ESP32 (WROOM) 拥有约 520KB SRAM。去除 WiFi 协议栈、Web 服务器以及
 ---
 
 *详细质证过程与合规审计报告可参考后台法证归档文件：*
-- **鲇鱼《设计缺陷控诉书》**：[design_defect_accusation.md](file:///home/chenming/.gemini/antigravity-cli/brain/9392645c-9d39-414d-9cf1-1851e6c044f1/design_defect_accusation.md)
+- **杠精《设计缺陷控诉书》**：[design_defect_accusation.md](file:///home/chenming/.gemini/antigravity-cli/brain/9392645c-9d39-414d-9cf1-1851e6c044f1/design_defect_accusation.md)
 - **监理首轮《审计意见书》**：[compliance_audit_report.md](file:///home/chenming/.gemini/antigravity-cli/brain/3107224b-def5-4161-afda-32fce6ff5fe7/compliance_audit_report.md)
 
 ---
@@ -184,7 +184,7 @@ sequenceDiagram
     participant User as 用户
     participant A as Agent A (包工头)
     participant B as Agent B (牛马)
-    participant C as Agent C (鲇鱼)
+    participant C as Agent C (杠精)
     participant D as Agent D (监理)
 
     Note over A,D: 阶段 1：计划与授权
@@ -215,7 +215,7 @@ sequenceDiagram
 | 里程碑 | 预期输出物 | 验证方法 | 退出/收敛条件 |
 | :--- | :--- | :--- | :--- |
 | **M1: 移植计划评审** | `docs/ESP32移植.md` | 用户确认并同意 Proceed 授权 | 方案架构对齐，四方角色实体化定义完毕。 |
-| **M2: 设计缺陷清零** | 子智能体辩论记录、WDT与多任务方案设计 | 监理（Agent D）出具 of 合规性报告，Critical 风险点闭环 | 鲇鱼（Agent C）提出的所有 Critical 挑战均被 Resolved（或被 A 裁决）。 |
+| **M2: 设计缺陷清零** | 子智能体辩论记录、WDT与多任务方案设计 | 监理（Agent D）出具 of 合规性报告，Critical 风险点闭环 | 杠精（Agent C）提出的所有 Critical 挑战均被 Resolved（或被 A 裁决）。 |
 | **M3: 移植代码交付** | 修改后的 `main.c` | 本地交叉编译通过（使用 ESP-IDF CLI），串口输出正常 | 代码零编译错误，`tcl_init` 运行成功，串口输出 BareTcl 提示符。 |
 | **M4: 硬件联调测试** | GPIO 操作演示，多命令联调，长时间运行 WDT 稳定性校验 | 连接串口终端进行交互式命令测试；编写测试 Tcl 脚本持续运行 | Tcl 命令行能够成功控制继电器电平，运行 1 小时内无 watchdog 触发复位。 |
 
