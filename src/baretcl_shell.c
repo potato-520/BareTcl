@@ -2,6 +2,11 @@
  * baretcl_shell.c - 为 BareTcl 设计的高可靠、零内存分配行编辑器
  */
 
+#ifndef TCL_SHELL_USE_ANSI
+#define TCL_SHELL_USE_ANSI 1
+#endif
+int baretcl_use_ansi = TCL_SHELL_USE_ANSI;
+
 #define SHELL_MAX_LINE 256      /* 单行输入最大长度 */
 #define SHELL_MAX_HIST 16       /* 历史记录最大条数 */
 
@@ -40,8 +45,15 @@ static void shell_init(TclShell *shell) {
 
 /* 清除当前终端行显示 */
 static void shell_clear_line(TclShell *shell) {
-    /* ANSI: 移动光标至行首并清除光标后所有内容 */
-    tcl_hal_puts((const tcl_u8*)"\r\x1b[K");
+    if (baretcl_use_ansi) {
+        /* ANSI: 移动光标至行首并清除光标后所有内容 */
+        tcl_hal_puts((const tcl_u8*)"\r\x1b[K");
+    } else {
+        /* 非 ANSI: 物理输出退格+空格擦除当前输入 */
+        for (tcl_u32 index = 0; index < shell->cursor; index++) {
+            tcl_hal_puts((const tcl_u8*)"\b \b");
+        }
+    }
 }
 
 /* 刷新 Shell 提示符与输入行显示 */
@@ -79,7 +91,9 @@ static void shell_insert(TclShell *shell, tcl_u8 character) {
         shell->len++;           /* 增加总长度 */
         shell->line[shell->len] = 0; /* 结束符 */
         /* 刷新显示 */
-        tcl_hal_puts((const tcl_u8*)"\x1b[K"); /* 清除后续显示 */
+        if (baretcl_use_ansi) {
+            tcl_hal_puts((const tcl_u8*)"\x1b[K"); /* 清除后续显示 */
+        }
         tcl_hal_puts(shell->line + shell->cursor - 1); /* 输出新插入及后续内容 */
         for (tcl_u32 index = 0; index < shell->len - shell->cursor; index++) {
             tcl_hal_puts((const tcl_u8*)"\b"); /* 将物理光标退回逻辑位置 */
@@ -103,8 +117,14 @@ static void shell_backspace(TclShell *shell) {
         shell->len--;           /* 减少长度 */
         shell->cursor--;        /* 光标逻辑回退 */
         tcl_hal_puts((const tcl_u8*)"\b"); /* 物理光标回退 */
-        tcl_hal_puts((const tcl_u8*)"\x1b[K"); /* 清除旧显内容 */
+        if (baretcl_use_ansi) {
+            tcl_hal_puts((const tcl_u8*)"\x1b[K"); /* 清除旧显内容 */
+        }
         tcl_hal_puts(shell->line + shell->cursor); /* 重新显示后随部分 */
+        if (!baretcl_use_ansi) {
+            tcl_hal_puts((const tcl_u8*)" "); /* 物理覆盖末尾旧字符 */
+            tcl_hal_puts((const tcl_u8*)"\b");
+        }
         for (tcl_u32 index = 0; index < shell->len - shell->cursor; index++) {
             tcl_hal_puts((const tcl_u8*)"\b"); /* 物理回退至逻辑位置 */
         }
@@ -167,13 +187,13 @@ tcl_i32 shell_handle_char(TclShell *shell, tcl_u8 character, const char *prompt)
              }
         }
         else if (character == 'C') { /* 方向键：右 (RIGHT) */
-            if (shell->cursor < shell->len) {
+            if (baretcl_use_ansi && shell->cursor < shell->len) {
                 shell->cursor++; /* 逻辑步进 */
                 tcl_hal_puts((const tcl_u8*)"\x1b[C"); /* 物理步进 */
             }
         }
         else if (character == 'D') { /* 方向键：左 (LEFT) */
-            if (shell->cursor > 0) {
+            if (baretcl_use_ansi && shell->cursor > 0) {
                 shell->cursor--; /* 逻辑回退 */
                 tcl_hal_puts((const tcl_u8*)"\x1b[D"); /* 物理回退 */
             }

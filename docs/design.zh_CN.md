@@ -133,7 +133,8 @@
 | :--- | :--- | :--- |
 | `tcl_core.c` | C 源码 | **解释器核心**：包含类型系统、FSM 状态机、内存 Arena 管理及 12 个原初原子指令。严禁依赖任何标准 C 库。 |
 | `extcmd.c` | C 源码 | **环境适配扩展**：实现 `puts`, `exit` 等平台/操作系统相关的定制命令。 |
-| `demo.c` | C 源码 | **测试外壳**：通过 `#include "tcl_core.c"` 和 `extcmd.c` 集成内核，提供 Linux 环境下的交互式 REPL 和文件执行接口。 |
+| `baretcl_shell.c` | C 源码 | **交互式 REPL 命令行编辑器**：为 BareTcl 提供零物理内存分配的轻量级行编辑与历史记录功能。 |
+| `demo.c` | C 源码 | **测试外壳**：通过 `#include "tcl_core.c"`、`extcmd.c` 与 `baretcl_shell.c` 集成内核，提供 Linux 环境下的交互式 REPL 和文件执行接口。 |
 | `design.md` | 文档 | **设计规格书**：定义系统架构、物理红线及开发规范。 |
 | `tcllib.tcl` | Tcl 脚本 | **自举扩展库**：完全基于原初指令，实现 `for`, `foreach`, `switch` 等高级控制流及常用函数。 |
 | `tcl2c.py` | Python 脚本 | **转换工具**：将 `tcllib.tcl` 静态化为 C 语言字节数组，以便内核在初始化时自动加载自举逻辑。 |
@@ -157,6 +158,18 @@
     *   **职能**：启动状态机解析并执行脚本。返回 `TCL_OK`, `TCL_ERROR` 或 `TCL_EXIT` 等状态。
 *   **`const char *tcl_get_result(void)`**：
     *   **职能**：获取当前解释器状态机结束后的最终返回字符串（Result）。
+
+### 8.3 嵌入式硬件看门狗与时间片让出钩子 (Multi-tasking & WDT Yield Hook)
+为了使 BareTcl 能够适应抢占式多任务系统（如 FreeRTOS）或看门狗（WDT）受控环境，内核提供了一个单步微延迟钩子：
+*   **`TCL_YIELD_HOOK()`**：
+    *   **职能**：在 `tcl_core.c` 的状态机主循环头部被高频调用。
+    *   **默认配置**：若外部未定义，则该宏被声明为空操作 `((void)0)`，对 PC 端及通用编译环境无任何额外消耗与性能影响。在嵌入式多任务环境中，可在平台编译层（如包含 `tcl_core.c` 之前）定义此宏，例如计数每 1000 次 FSM 单步跳转后执行一次 `vTaskDelay` 出让时间片，以保证看门狗被及时喂狗并维持其他实时任务的平滑运作。
+
+### 8.4 交互式命令行控制台 (REPL Terminal Configuration)
+在 [baretcl_shell.c](file:///home/chenming/BareTcl/src/baretcl_shell.c) 模块中，为了适配不支持 ANSI 转义序列的非标准文本流串口终端（如 Arduino IDE 串口监视器），行编辑器提供了终端兼容控制变量：
+*   **`baretcl_use_ansi`** (全局控制变量)：
+    *   **值 = 1** (默认值)：开启完整 ANSI 转义序列输出，提供完整的光标移动、行中插入删除与 ANSI 终端擦除体验。
+    *   **值 = 0** (降级模式)：屏蔽所有 `\x1b` ANSI 序列输出，自动降级为标准的物理退格+空格擦除序列（`\b \b`），避免在非 ANSI 终端下产生乱码，且能完美兼容基础退格。
 
 ---
 

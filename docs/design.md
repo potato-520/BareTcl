@@ -133,7 +133,8 @@ The project consists of the following core components to ensure integrity from t
 | :--- | :--- | :--- |
 | `tcl_core.c` | C Source | **Interpreter Core**: Contains the type system, FSM, Arena management, and 12 core atoms. Zero Libc dependency. |
 | `extcmd.c` | C Source | **Environment Extensions**: Implements platform/OS-specific commands like `puts` and `exit`. |
-| `demo.c` | C Source | **Test Shell**: Integrates the core via `#include` for interactive REPL and file execution on Linux. |
+| `baretcl_shell.c` | C Source | **Interactive REPL Line Editor**: Provides zero-allocation, lightweight line editing and history management. |
+| `demo.c` | C Source | **Test Shell**: Integrates the core, extensions, and shell via `#include` for interactive REPL and file execution on Linux. |
 | `design.md` | Doc | **Design Specification**: Defines architecture, hard constraints, and standards. |
 | `tcllib.tcl` | Tcl Script | **Bootstrap Library**: Implements `for`, `foreach`, `switch`, etc., using only Core Atoms. |
 | `tcl2c.py` | Python Script | **Conversion Tool**: Converts `tcllib.tcl` into a C byte array for automatic loading during initialization. |
@@ -157,6 +158,18 @@ To seamlessly integrate the core into bare-metal environments, the following sta
     *   Starts FSM parsing and execution. Returns `TCL_OK`, `TCL_ERROR`, or `TCL_EXIT`.
 *   **`const char *tcl_get_result(void)`**:
     *   Retrieves the final result string after FSM completion.
+
+### 8.3 Watchdog & Multi-tasking Yield Hook
+To adapt BareTcl to preemptive multi-tasking operating systems (e.g., FreeRTOS) or watchdog-controlled (WDT) environments, the core provides a step-level micro-delay hook:
+*   **`TCL_YIELD_HOOK()`**:
+    *   **Function**: Invoked at high frequency at the beginning of the FSM main loop in `tcl_core.c`.
+    *   **Default Configuration**: If undefined, it resolves to a no-op `((void)0)`, causing zero performance overhead or footprint impact on PC and general compilation. On embedded platforms with concurrent tasks (such as ESP32), it can be defined in the platform wrapper to execute `vTaskDelay` (e.g., every 1000 FSM iterations) to allow the OS to feed the watchdog and handle real-time tasks smoothly.
+
+### 8.4 Interactive REPL Terminal Configuration
+In the [baretcl_shell.c](file:///home/chenming/BareTcl/src/baretcl_shell.c) module, to accommodate non-standard raw serial text streams that do not support ANSI escape codes (e.g., Arduino IDE Serial Monitor), a compatibility control variable is provided:
+*   **`baretcl_use_ansi`** (Global control variable):
+    *   **Value = 1** (Default): Enables full ANSI escape sequence rendering for cursor movement, inline insert/delete, and terminal clearing.
+    *   **Value = 0** (Fallback mode): Disables all `\x1b` ANSI escapes and falls back to a clean physical backspace and space sequence (`\b \b`) to delete characters, preventing control code garbage output on basic monitors.
 
 ---
 
