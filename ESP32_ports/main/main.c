@@ -208,9 +208,10 @@ static void ping_on_success(esp_ping_handle_t hdl, void *args) {
     esp_ping_get_profile(hdl, ESP_PING_PROF_IPADDR, &target_addr, sizeof(target_addr));
     res->success_cnt++;
     res->last_rtt = elapsed_time;
-    printf("%ld bytes from " IPSTR ": icmp_seq=%d time=%ld ms\n", 
-           (long)recv_len, IP2STR(&target_addr.u_addr.ip4), res->total_cnt, (long)elapsed_time);
-    fflush(stdout);
+    char out_buf[128];
+    snprintf(out_buf, sizeof(out_buf), "%ld bytes from " IPSTR ": icmp_seq=%d time=%ld ms\r\n", 
+             (long)recv_len, IP2STR(&target_addr.u_addr.ip4), res->total_cnt, (long)elapsed_time);
+    tcl_hal_puts((const tcl_u8 *)out_buf);
     res->total_cnt++;
 }
 
@@ -219,8 +220,10 @@ static void ping_on_timeout(esp_ping_handle_t hdl, void *args) {
     ping_result_t *res = (ping_result_t *)args;
     ip_addr_t target_addr;
     esp_ping_get_profile(hdl, ESP_PING_PROF_IPADDR, &target_addr, sizeof(target_addr));
-    printf("From " IPSTR " icmp_seq=%d timeout\n", IP2STR(&target_addr.u_addr.ip4), res->total_cnt);
-    fflush(stdout);
+    char out_buf[128];
+    snprintf(out_buf, sizeof(out_buf), "From " IPSTR " icmp_seq=%d timeout\r\n", 
+             IP2STR(&target_addr.u_addr.ip4), res->total_cnt);
+    tcl_hal_puts((const tcl_u8 *)out_buf);
     res->total_cnt++;
 }
 
@@ -299,8 +302,9 @@ tcl_i32 tcl_cmd_ping(TclCtx *context, tcl_i32 arg_count, tcl_u32 *arg_values) {
     target_addr.type = IPADDR_TYPE_V4;
     freeaddrinfo(res_addr);
     
-    printf("PING %s (" IPSTR ")\n", host, IP2STR(&target_addr.u_addr.ip4));
-    fflush(stdout);
+    char out_buf[128];
+    snprintf(out_buf, sizeof(out_buf), "PING %s (" IPSTR ")\r\n", host, IP2STR(&target_addr.u_addr.ip4));
+    tcl_hal_puts((const tcl_u8 *)out_buf);
 
     esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
     ping_config.target_addr = target_addr;
@@ -614,16 +618,15 @@ static esp_err_t relay_change_handler(httpd_req_t *req) {
         
         // 加互斥锁更新计时器与激活标志位
         if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
-            int current_val = gpio_get_level(relayPins[index]);
-            next_val = !current_val; // 翻转电平
-            gpio_set_level(relayPins[index], next_val);
-            
-            if (next_val == 0) { // 继电器开启
+            if (relayOn[index]) { // 当前开启 -> 关闭
+                next_val = 1;
+                relayOn[index] = false;
+            } else { // 当前关闭 -> 开启
+                next_val = 0;
                 relayOnMillis[index] = esp_timer_get_time() / 1000;
                 relayOn[index] = true;
-            } else { // 继电器手动关闭
-                relayOn[index] = false;
             }
+            gpio_set_level(relayPins[index], next_val);
             xSemaphoreGive(relayMutex);
         }
         
@@ -864,15 +867,16 @@ void app_main(void) {
             if (buttonState == 0 && lastButtonState[i] == 1) { // 边缘跳变捕获：按键被按下
                 // 在互斥锁保护下翻转继电器的输出电平并启动自动关断计时
                 if (xSemaphoreTake(relayMutex, portMAX_DELAY) == pdTRUE) {
-                    int currentVal = gpio_get_level(relayPins[i]);
-                    int nextVal = !currentVal;
-                    gpio_set_level(relayPins[i], nextVal);
-                    if (nextVal == 0) { // 继电器开启
+                    int nextVal = 1;
+                    if (relayOn[i]) { // 当前开启 -> 关闭
+                        nextVal = 1;
+                        relayOn[i] = false;
+                    } else { // 当前关闭 -> 开启
+                        nextVal = 0;
                         relayOn[i] = true;
                         relayOnMillis[i] = esp_timer_get_time() / 1000;
-                    } else {
-                        relayOn[i] = false;
                     }
+                    gpio_set_level(relayPins[i], nextVal);
                     xSemaphoreGive(relayMutex);
                 }
             }
