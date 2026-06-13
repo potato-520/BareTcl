@@ -47,8 +47,6 @@ By integrating BareTcl, you can transform an ordinary serial port into a powerfu
 - **GC Extreme Pressure**: Withstood tens of thousands of variable churn tests in an Arena space of only 64KB, with zero leaks and zero fragmentation.
 - **Native ESP32 Chip Porting**: Fully functional native C porting on ESP32-C3 using ESP-IDF (see [ESP32_ports](file:///home/chenming/BareTcl/ESP32_ports)). Features a non-blocking serial REPL, VFS unbuffered real-time input, safe task yielding (`TCL_YIELD_HOOK`) to satisfy hardware/software watchdog timers, and C extension bindings for physical GPIOs (relays and buttons). For details, see [ESP32 Porting Design & Pitfalls](./ESP32移植.md).
 
-  [![Demo Video: BareTcl Running Successfully on ESP32](./video_thumbnail.jpg)](./ESP32成功运行BareTcl.mp4)
-
 ---
 
 ## Developer's Guide
