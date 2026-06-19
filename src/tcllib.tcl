@@ -164,3 +164,46 @@ proc info_exists {varName} {
     if {$res == 0} { return 1 }
     return 0
 }
+
+
+
+proc q_rec {r b} {
+    if {$r == 8} {
+        puts $b
+    } else {
+        for {set c 0} {$c < 8} {incr c} {
+            set k 1
+            for {set i 0} {$i < $r} {incr i} {
+                set y [lindex $b $i]
+                if {$y == $c || [abs [expr $c - $y]] == [expr $r - $i]} {
+                    set k 0
+                    break
+                }
+            }
+            if {$k} {
+                set n $b
+                lappend n $c
+                q_rec [expr $r + 1] $n
+            }
+        }
+    }
+}
+
+proc queens {} {
+    q_rec 0 {}
+}
+
+# help: BareTcl 基础命令帮助
+proc help {} {
+    puts "BareTcl commands:"
+    puts "  abs <x>                            # return absolute value"
+    puts "  incr <varName> ?step?              # increment variable"
+    puts "  for <start> <cond> <next> <body>   # standard for loop"
+    puts "  foreach <var> <list> <body>        # standard foreach loop"
+    puts "  lappend <varName> ?arg ...?        # append items to list"
+    puts "  lset <varName> <index> <val>       # set list element"
+    puts "  lsearch <list> <pattern>           # search item in list"
+    puts "  queens                             # solve 8-queens puzzle (recursive test)"
+    puts "  exit                               # leave BareTcl mode"
+}
+
