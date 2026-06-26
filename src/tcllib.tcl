@@ -8,6 +8,164 @@ proc abs {x} {
     }; 
     return $x 
 }
+
+# --- 圆周率高精度测试函数 ---
+# pi: 使用 Machin 公式计算圆周率，digits 为小数点后位数。
+proc pi_big_add {A B} {
+    set res {}
+    set carry 0
+    set lenA [llength $A]
+    set lenB [llength $B]
+    set max_len $lenA
+    if {$lenB > $max_len} { set max_len $lenB }
+    for {set i 0} {$i < $max_len || $carry > 0} {incr i} {
+        set valA 0
+        if {$i < $lenA} { set valA [lindex $A $i] }
+        set valB 0
+        if {$i < $lenB} { set valB [lindex $B $i] }
+        set sum [expr {$valA + $valB + $carry}]
+        append res " " [expr {$sum % 10000}]
+        set carry [expr {$sum / 10000}]
+    }
+    return $res
+}
+
+proc pi_big_sub {A B} {
+    set res {}
+    set borrow 0
+    set lenA [llength $A]
+    set lenB [llength $B]
+    for {set i 0} {$i < $lenA} {incr i} {
+        set valA [lindex $A $i]
+        set valB 0
+        if {$i < $lenB} { set valB [lindex $B $i] }
+        set diff [expr {$valA - $valB - $borrow}]
+        if {$diff < 0} {
+            set diff [expr {$diff + 10000}]
+            set borrow 1
+        } else {
+            set borrow 0
+        }
+        append res " " $diff
+    }
+    while {[llength $res] > 1 && [lindex $res end] == 0} {
+        set res [lrange $res 0 end-1]
+    }
+    return $res
+}
+
+proc pi_big_div_short {A divisor} {
+    set len [llength $A]
+    set rem 0
+    set res {}
+    for {set i [expr {$len - 1}]} {$i >= 0} {incr i -1} {
+        set val [lindex $A $i]
+        set cur [expr {$rem * 10000 + $val}]
+        set d [expr {$cur / $divisor}]
+        set rem [expr {$cur % $divisor}]
+        set res "$d $res"
+    }
+    while {[llength $res] > 1 && [lindex $res end] == 0} {
+        set res [lrange $res 0 end-1]
+    }
+    return $res
+}
+
+proc pi_arccot_scaled {x multiplier M} {
+    set start {}
+    for {set i 0} {$i < $M} {incr i} {
+        append start " 0"
+    }
+    append start " " $multiplier
+    set term [pi_big_div_short $start $x]
+    set sum $term
+    set n 1
+    set x2 [expr {$x * $x}]
+    while {1} {
+        set term [pi_big_div_short $term $x2]
+        if {[llength $term] == 1 && [lindex $term 0] == 0} {
+            break
+        }
+        set term_to_add [pi_big_div_short $term [expr {2 * $n + 1}]]
+        if {[llength $term_to_add] == 1 && [lindex $term_to_add 0] == 0} {
+            break
+        }
+        if {[expr {$n % 2}] == 1} {
+            set sum [pi_big_sub $sum $term_to_add]
+        } else {
+            set sum [pi_big_add $sum $term_to_add]
+        }
+        incr n
+    }
+    return $sum
+}
+
+proc pi_pad_zero {val} {
+    if {$val < 10} { return "000$val" }
+    if {$val < 100} { return "00$val" }
+    if {$val < 1000} { return "0$val" }
+    return $val
+}
+
+proc pi_pad_width {val width} {
+    set text $val
+    while {[string length $text] < $width} {
+        set text "0$text"
+    }
+    return $text
+}
+
+proc pi {digits} {
+    if {$digits < 0} {
+        error "digits must be >= 0"
+    }
+    if {$digits == 0} {
+        return 3
+    }
+
+    set blocks [expr {($digits + 3) / 4}]
+    set remainder [expr {$digits % 4}]
+    set M [expr {$blocks + 3}]
+
+    set part1 [pi_arccot_scaled 5 16 $M]
+    set part2 [pi_arccot_scaled 239 4 $M]
+    set pi_val [pi_big_sub $part1 $part2]
+
+    set pi_rev {}
+    set len_pi [llength $pi_val]
+    for {set i [expr {$len_pi - 1}]} {$i >= 0} {incr i -1} {
+        append pi_rev " " [lindex $pi_val $i]
+    }
+
+    set first [lindex $pi_rev 0]
+    set rest_str {}
+    set full_blocks $blocks
+    if {$remainder != 0} {
+        set full_blocks [expr {$blocks - 1}]
+    }
+
+    set idx 1
+    while {$idx <= $full_blocks} {
+        append rest_str [pi_pad_zero [lindex $pi_rev $idx]]
+        incr idx
+    }
+
+    if {$remainder != 0} {
+        set last_group [lindex $pi_rev [expr {$full_blocks + 1}]]
+        if {$remainder == 1} {
+            set last_group [expr {$last_group / 1000}]
+        }
+        if {$remainder == 2} {
+            set last_group [expr {$last_group / 100}]
+        }
+        if {$remainder == 3} {
+            set last_group [expr {$last_group / 10}]
+        }
+        append rest_str [pi_pad_width $last_group $remainder]
+    }
+
+    return "$first.$rest_str"
+}
 # incr: 变量自增，支持可选步长参数，保持与标准 Tcl 的基础语义一致
 proc incr {varName args} {
     upvar 1 $varName value
@@ -203,7 +361,7 @@ proc help {} {
     puts "  lappend <varName> ?arg ...?        # append items to list"
     puts "  lset <varName> <index> <val>       # set list element"
     puts "  lsearch <list> <pattern>           # search item in list"
+    puts "  pi <digits>                        # calculate Pi to N decimal places"
     puts "  queens                             # solve 8-queens puzzle (recursive test)"
     puts "  exit                               # leave BareTcl mode"
 }
-
